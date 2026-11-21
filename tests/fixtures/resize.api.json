@@ -1,0 +1,1 @@
+{"a": {"class_type": "LoadImage", "inputs": {"image": "example.png"}}, "b": {"class_type": "ImageScale", "inputs": {"image": ["a", 0], "width": 512, "height": 512, "upscale_method": "nearest-exact", "crop": "disabled"}}, "c": {"class_type": "SaveImage", "inputs": {"images": ["b", 0], "filename_prefix": "test"}}}

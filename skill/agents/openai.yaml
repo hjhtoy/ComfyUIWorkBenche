@@ -1,0 +1,3 @@
+interface:
+  display_name: "ComfyUI API 工作台"
+  short_description: "把 ComfyUI API 工作流 JSON 生成可连接服务器的单文件 HTML 工作台"

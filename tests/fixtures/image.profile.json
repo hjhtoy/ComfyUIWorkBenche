@@ -1,0 +1,1 @@
+{"title": "文生图 <示例>", "prompt": ["6", "text"], "outputs": ["9"], "seed": ["3", "seed"], "sampler": "3", "size": {"mode": "preset", "width": ["5", "width"], "height": ["5", "height"], "presets": [[768, 512], [512, 768]]}, "steps": {"mode": "integer", "field": ["3", "steps"], "min": 1, "max": 40}, "matchIgnore": [["9", "filename_prefix"]]}

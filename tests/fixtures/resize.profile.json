@@ -1,0 +1,1 @@
+{"title": "\u56fe\u7247\u7f29\u653e", "outputs": ["c"], "references": [{"file": ["a", "image"], "targets": [["b", "image"]], "required": true}], "size": {"mode": "preset", "width": ["b", "width"], "height": ["b", "height"], "presets": [[1024, 1024]]}}
