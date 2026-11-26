@@ -1,5 +1,5 @@
 from support import html_path, launch_chromium
-import asyncio, io, base64, zlib, sys
+import asyncio, io, re, zlib, sys
 from pathlib import Path
 from PIL import Image
 from aiohttp import web
@@ -155,7 +155,9 @@ async def main():
         page = await context.new_page()
         page.set_default_timeout(7000)
         errors = []
+        downloads = []
         page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("download", lambda d: downloads.append(d.suggested_filename))
         if http_mode:
             await page.add_init_script(
                 "window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('frameform-test', {create:true})"
@@ -187,8 +189,10 @@ async def main():
             Image.new("RGB", (8, 8), tuple(pixel)).save(buf, format="PNG")
             return {"name": name, "mimeType": "image/png", "buffer": buf.getvalue()}
 
-        async def file(name, content=None):
+        async def file(name, content=None, library_name=None):
             await page.locator("#file").set_input_files(image_file(name, content))
+            await page.wait_for_function("!document.querySelector('#file').files.length")
+            await page.get_by_role("button", name=library_name or name, exact=True).last.click()
             await page.locator("#picker").wait_for(state="hidden")
 
         await file("人像.png")
@@ -291,7 +295,7 @@ async def main():
             await page.locator(".thumb").filter(has_text=name).click()
             await page.keyboard.insert_text(" / ")
         await page.keyboard.insert_text("@")
-        await file("重命名.png", "人像.png")
+        await file("重命名.png", "人像.png", library_name="人像.png")
         assert (
             await ed.locator(".mention").count() == 4
             and await page.locator("#refCount").inner_text() == "2"
@@ -332,11 +336,15 @@ async def main():
         api.running.append(r)
         await api.ws(r, "progress", node="125", value=3, max=7)
         await page.get_by_text("采样 3 / 7").wait_for()
-        await page.locator(".job").last.get_by_text("运行 00:01").wait_for()
+        clock = page.locator(".job").last.locator(".job-clock")
+        await clock.filter(
+            has_text=re.compile(r"^运行 (?!00:00$)\d{2}:\d{2}(?::\d{2})?$")
+        ).wait_for()
         await page.locator(".job").last.locator(".job-name").click()
-        await page.get_by_text("草稿已保存").wait_for()
-        assert await page.evaluate("snapshot().prompt") == prompt_before
-        assert await size.locator("option:checked").inner_text() == "576 × 1024"
+        assert await page.locator(".job.selected").count() == 1
+        assert await page.locator("#player").is_hidden()
+        assert await page.evaluate("snapshot().prompt") == "第二条视频"
+        assert await size.locator("option:checked").inner_text() == "1024 × 1024"
         assert (
             "9:16"
             in await page.locator(".job").last.locator(".job-metrics").inner_text()
@@ -365,23 +373,27 @@ async def main():
         await page.locator(".job").first.get_by_text("已取消", exact=True).wait_for()
         assert {"delete": [id]} in api.cancels
         assert "12 秒" in await page.locator(".job").first.inner_text()
-        api.movie = base64.b64decode(
-            await page.evaluate(
-                """async()=>{const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');const stream=c.captureStream(10),rec=new MediaRecorder(stream,{mimeType:'video/webm'}),parts=[];rec.ondataavailable=e=>parts.push(e.data);const done=new Promise(r=>rec.onstop=r);rec.start();for(let i=0;i<4;i++){g.fillStyle=i%2?'orange':'black';g.fillRect(0,0,64,64);await new Promise(r=>setTimeout(r,100))}rec.stop();await done;stream.getTracks().forEach(t=>t.stop());return btoa(String.fromCharCode(...new Uint8Array(await new Blob(parts).arrayBuffer())))}"""
-            )
-        )
+        api.movie = (root / "fixtures/preview.webm").read_bytes()
         await page.locator("#openSettings").click()
-        await page.locator("#autoCache").check()
         if http_mode:
             await page.locator("#pickDirectory").click()
             await page.get_by_text("frameform-test", exact=True).wait_for()
         await page.locator("#closeSettings").click()
         await ed.fill("完成测试")
-        await page.locator("#addRef").click()
+        await page.keyboard.insert_text("@")
         await file("保留参考.png")
         await page.locator("#generate").click()
+        await page.wait_for_function(
+            "document.querySelector('#generateLabel').textContent==='已加入队列'"
+        )
+        assert "success" in (await page.locator("#formError").get_attribute("class"))
+        assert "已加入队列" in await page.locator("#formError").inner_text()
         await page.wait_for_function("jobs.at(-1)?.id")
 
+        await page.locator(".job").first.locator(".job-cover").click()
+        dialog = page.locator("#player")
+        await dialog.get_by_role("heading", name="服务器排队").wait_for()
+        assert await dialog.locator("#download").is_hidden()
         id = api.pending.pop()[1]
         api.history[id] = {
             "status": {"status_str": "success", "completed": True, "messages": []},
@@ -399,13 +411,29 @@ async def main():
                 "166": {"images": [{"filename": "poster.png", "type": "output"}]},
             },
         }
+        await page.wait_for_function(
+            "document.querySelector('#playerStage video')?.readyState >= 1"
+        )
+        assert await dialog.locator("#download").is_visible()
+        await dialog.locator("#closePlayer").click()
         await page.get_by_text(
-            "已保存到本机目录" if http_mode else "视频已缓存"
+            "已保存到本机目录" if http_mode else "已自动下载到浏览器下载目录"
         ).wait_for()
         if http_mode:
             assert await page.evaluate(
-                "async()=>{for await (const handle of directory.values()){if(handle.kind==='file' && handle.name.endsWith('video.webm'))return (await handle.getFile()).size>0}return false}"
+                "async()=>{for await (const handle of directory.values()){if(handle.kind==='file' && handle.name.endsWith('.webm'))return (await handle.getFile()).size>0}return false}"
             )
+        else:
+            assert any(name.endswith(".webm") for name in downloads), downloads
+        # Automatic saving is idempotent: several tabs watching the same queue
+        # must not download the same result again.
+        before = len(downloads)
+        await page.evaluate(
+            "()=>Promise.all([saveOutputs(jobs.find(j=>j.state==='done'),()=>{}),"
+            "saveOutputs(jobs.find(j=>j.state==='done'),()=>{})])"
+        )
+        await asyncio.sleep(0.8)
+        assert len(downloads) == before, downloads
 
         await page.wait_for_function(
             "document.querySelector('.job-cover img')?.naturalWidth===80"
@@ -439,19 +467,19 @@ async def main():
         assert await page.locator("#playerRefs img").count() == 1
         async with page.expect_download() as download:
             await page.locator("#download").click()
-        assert (await download.value).suggested_filename == "video.webm"
+        assert (await download.value).suggested_filename == "完成测试.webm"
 
         await page.locator("#reuse").click()
         await page.locator("#player").wait_for(state="hidden")
         await page.get_by_text("草稿已保存").wait_for()
         assert (await page.evaluate("snapshot().prompt")) == "完成测试<Picture 1>"
-        await ed.fill("选择成功任务也恢复")
+        await ed.fill("查看成功任务保留草稿")
         await page.locator(".job").first.locator(".job-name").click()
         await page.wait_for_function(
             "document.querySelector('#player video')?.readyState>=1"
         )
         await page.locator("#closePlayer").click()
-        assert (await page.evaluate("snapshot().prompt")) == "完成测试<Picture 1>"
+        assert await page.evaluate("snapshot().prompt") == "查看成功任务保留草稿"
         await page.unroute("**/view?*")
         api.reject = True
         await page.locator("#generate").click()
@@ -461,15 +489,16 @@ async def main():
         # Verify selection order after deletion and nine-slot binding.
         await page.locator("#steps").fill("6")
         await ed.fill("选择")
-        await page.locator("#addRef").click()
+        await page.keyboard.insert_text("@")
         await file("角色.png")
         for i in range(8):
-            await page.locator("#addRef").click()
+            await page.keyboard.insert_text("@")
             # Same name as the first file, but distinct image content, occupies another slot.
             await file("角色.png" if i == 0 else f"{i}.png", f"different{i}")
         assert await page.locator("#refCount").inner_text() == "9"
-        await page.locator("#addRef").click()
+        await page.keyboard.insert_text("@")
         await page.locator("#file").set_input_files(image_file("第十张.png"))
+        await page.get_by_role("button", name="第十张.png", exact=True).click()
         await page.get_by_text("已达到图片素材上限（9）", exact=False).wait_for()
         await page.locator(".thumb").filter(has_text="角色.png").first.click()
         assert (

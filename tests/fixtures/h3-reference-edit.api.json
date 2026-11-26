@@ -1,0 +1,523 @@
+{
+  "1": {
+    "inputs": {
+      "unet_name": "minimax_h3_hybrid_fl2va_ref2va_b25-49-int8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "2": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "3": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "12": {
+    "inputs": {
+      "noise_seed": 651546971546400
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "13": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "14": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1,
+      "model": [
+        "106",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "15": {
+    "inputs": {
+      "model": [
+        "106",
+        0
+      ],
+      "conditioning": [
+        "178",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "16": {
+    "inputs": {
+      "noise": [
+        "12",
+        0
+      ],
+      "guider": [
+        "15",
+        0
+      ],
+      "sampler": [
+        "13",
+        0
+      ],
+      "sigmas": [
+        "195",
+        0
+      ],
+      "latent_image": [
+        "178",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "17": {
+    "inputs": {
+      "samples": [
+        "16",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "40": {
+    "inputs": {
+      "image": "0dd603389e21bf4c35f639c73dc23286b004ea70260a5de76dd5e559e5c803e9.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "41": {
+    "inputs": {
+      "image": "7ac7b28f460adc3994db2a94532812c99ec4be3b3065911a1f20d057a737b6d9.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.30.0"
+    }
+  },
+  "106": {
+    "inputs": {
+      "model": [
+        "193",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+    "_meta": {
+      "title": "MiniMax H3 Memory Efficient Sage Attention Patch"
+    }
+  },
+  "146": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 2,
+      "resolution_steps": 1,
+      "image": [
+        "40",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "Scale Image to Total Pixels"
+    }
+  },
+  "156": {
+    "inputs": {
+      "batch_index": 1,
+      "length": 1,
+      "image": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Get Image from Batch"
+    }
+  },
+  "160": {
+    "inputs": {
+      "text": "图1中间穿黑色皮衣的人物替换成图2的人物，保持图1动作姿势和色调不变"
+    },
+    "class_type": "CR Text",
+    "_meta": {
+      "title": "CR Text（兼容文本）"
+    }
+  },
+  "164": {
+    "inputs": {
+      "direction": "right",
+      "match_image_size": true,
+      "image1": [
+        "146",
+        0
+      ],
+      "image2": [
+        "156",
+        0
+      ]
+    },
+    "class_type": "easy imageConcat",
+    "_meta": {
+      "title": "imageConcat"
+    }
+  },
+  "178": {
+    "inputs": {
+      "prompt": [
+        "239",
+        0
+      ],
+      "width": [
+        "191",
+        0
+      ],
+      "height": [
+        "191",
+        1
+      ],
+      "length": 22,
+      "ref_image_size": "match",
+      "clip": [
+        "2",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "146",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Reference to Video"
+    }
+  },
+  "184": {
+    "inputs": {
+      "method": "mkl",
+      "strength": 1,
+      "multithread": true,
+      "image_target": [
+        "156",
+        0
+      ],
+      "image_ref": [
+        "40",
+        0
+      ]
+    },
+    "class_type": "ColorMatchV2",
+    "_meta": {
+      "title": "Color Match V2"
+    }
+  },
+  "191": {
+    "inputs": {
+      "image": [
+        "146",
+        0
+      ]
+    },
+    "class_type": "easy imageSize",
+    "_meta": {
+      "title": "ImageSize"
+    }
+  },
+  "192": {
+    "inputs": {
+      "attention": "comfy kitchen attention",
+      "model": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ModelAttentionBackend",
+    "_meta": {
+      "title": "ModelAttentionBackend",
+      "cnr_id": "comfy-core",
+      "ver": "0.31.0"
+    }
+  },
+  "193": {
+    "inputs": {
+      "lora_name": "pika_h3_flex_turbo_8step_hd_ref2va.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "192",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "195": {
+    "inputs": {
+      "steps": 2,
+      "start_at_sigma": 0.65,
+      "end_at_sigma": 0,
+      "spacing": "cosine",
+      "sigmas": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "ExtendIntermediateSigmas",
+    "_meta": {
+      "title": "ExtendIntermediateSigmas"
+    }
+  },
+  "197": {
+    "inputs": {
+      "images": [
+        "146",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "226": {
+    "inputs": {
+      "source": [
+        "239",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "227": {
+    "inputs": {
+      "images": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "228": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "156",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "229": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "164",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "230": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "184",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "239": {
+    "inputs": {
+      "model_name": "Qwen3-VL-8B-Instruct",
+      "quantization": "None (FP16)",
+      "preset_prompt": "🖼️ Detailed Description",
+      "custom_prompt": [
+        "272",
+        0
+      ],
+      "max_tokens": 512,
+      "keep_model_loaded": true,
+      "seed": 900303802387974,
+      "attention_mode": "auto",
+      "image": [
+        "270",
+        0
+      ]
+    },
+    "class_type": "AILab_QwenVL",
+    "_meta": {
+      "title": "QwenVL"
+    }
+  },
+  "241": {
+    "inputs": {
+      "text": "subject_definitions:\n\n<Picture 1>：\n作为本次角色替换的画面底稿，决定最终画面的取景、人物布局、动作状态、场景内容及视觉风格。\n\n<Subject 1>：\n在底稿中需要替换的是【人物所在位置，以及能够区分该人物的描述】；替换后的角色由 <Picture 2> 定义。\n\n该角色的身份外观与穿戴均以 <Picture 2> 为依据，包括面部轮廓、五官形态、头发样式及颜色、虹膜颜色、服饰组合、佩戴物和其他辨识性特征。\n\n<Picture 1> 则负责确定这个角色如何出现在画面中：沿用原人物的身体动作、头部姿态、面部神情、注视方向、所在位置，以及与周围人物和物体的空间关系。\n\n服装按参考角色的完整搭配重新配置，但展示范围受底稿的取景限制，画外部分无需补出。\n\n【有多个替换对象时，为每个人建立独立的 Subject，分别填写“底稿中的目标人物”和“提供角色设计的参考图片”。】\n\n【一个角色需要结合多张参考图时，在同一个 Subject 下列出来源分工，例如：面部与头发依据 <Picture 2>，衣着与饰品依据 <Picture 3>。】\n\nsummary:\n\n[reference generation]\n在 <Picture 1> 的原有场景中完成指定人物的角色替换。每个替换对象使用其绑定参考图中的角色身份和整套装扮，同时继续承担底稿中原人物的动作、神态与画面位置。\n\n最终效果应像这些参考角色原本就被绘制在 <Picture 1> 中：人物对应明确，场景与构图延续原貌，所有角色统一融入底稿的美术表现。\n\nretention_analysis:\n\n<Subject 1> (appears in [Shot 1]): attribute_transfer -\n需要重建的是人物的身份外观和穿戴设计，具体采用 <Picture 2> 中的【填写角色的面部、头发、服装、配饰及标志性细节】。\n\n原人物在这些方面的特征由参考角色的设计取代。换装以目标服饰本身的结构为准，不沿用旧服装的款式限制；衣物类别、轮廓及身体覆盖位置可以随目标造型发生相应变化。实际绘制内容以当前取景内能够看到的部分为限。\n\n<Subject 1> (appears in [Shot 1]): fully_preserved -\n不随角色身份更换而改变的是原人物的表演状态与空间安排：四肢如何摆放、头部如何转动或倾斜、身体朝向何处、呈现什么表情、目光落向哪里，以及人物在画面中的位置、裁切和前后遮挡。\n\n上述保留要求针对动作与构图，不包含已经指定替换的脸部身份、头发、衣着和配饰。\n\n【其余 Subject 分别补充以上两类说明，明确各自迁移哪些参考图属性，以及保留底稿中哪一位人物的状态。】\n\n未编辑区域 (appears in [Shot 1]): fully_preserved -\n指定人物之外的画面继续使用 <Picture 1> 的内容。未参与替换的人物、场景物件、背景结构、空间分布、镜头角度和整体色彩均保持原样。\n\ndetailed_description:\n\n[Shot 1]\n画面展示角色替换完成后的结果，视野边界、观察角度与构图安排均承接 <Picture 1>。\n\n【具体位置】处的人物现在是 <Subject 1>。其面部与头发呈现 <Picture 2> 所定义的【关键外观】，身着【目标服装的主要款式、颜色与结构】，并佩戴【目标配饰】。这些角色特征出现在原人物所在的位置，配合原有的【动作、头部姿态、表情及视线】呈现。\n\n【每增加一个替换人物，另写一段，交代其位置、绑定的参考图片、应当出现的角色特征，以及继续沿用的原图状态。】\n\n参考角色的设计需要适配底稿中的实际视角，而不是直接搬入参考图的姿势。面部按照当前头部角度组织五官，保留原图神态与目光；头发随头部方向和身体姿态自然展开；衣物依据动作形成相应的拉伸、垂坠和褶皱；饰品则按照佩戴位置、透视及遮挡显示。\n\n绘制方式始终与 <Picture 1> 一致，包括勾线、色彩铺陈、材质处理和明暗塑造。处于不同景深位置的人物，应分别匹配当地的光照、环境色及细节密度，使替换部分自然融入原画面。\n\n整幅画面仍保有原先的人数、站位或坐位安排及互动关系。人物与前景、物体、其他角色之间的遮挡顺序不变，服饰和配件仅在现有裁切范围内呈现。\n\n以下为具体要求：\n@@"
+    },
+    "class_type": "JjkText",
+    "_meta": {
+      "title": "Text"
+    }
+  },
+  "270": {
+    "inputs": {
+      "direction": "right",
+      "match_image_size": true,
+      "image1": [
+        "40",
+        0
+      ],
+      "image2": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "easy imageConcat",
+    "_meta": {
+      "title": "imageConcat"
+    }
+  },
+  "272": {
+    "inputs": {
+      "find1": "@@",
+      "replace1": [
+        "160",
+        0
+      ],
+      "find2": "",
+      "replace2": "",
+      "find3": "",
+      "replace3": "",
+      "text": [
+        "241",
+        0
+      ]
+    },
+    "class_type": "CR Text Replace",
+    "_meta": {
+      "title": "🔤 CR Text Replace"
+    }
+  },
+  "277": {
+    "inputs": {
+      "rgthree_comparer": {
+        "images": [
+          {
+            "name": "A",
+            "selected": true,
+            "url": "/view?filename=rgthree.compare._temp_rgvuv_00001_rdxvv_1794812660.jpg&type=temp&size=2193.67&width=2148&height=1188&label=Normal&score=0&auditDecision=PASS&auditRequestId=202611161504207DE4F976D5B93D5E7168&cos_url=https%3A%2F%2Frh-comfyui01.tos-cn-beijing.volces.com%2F95a57c4b31488a67692ee7e1a2da3e2a%2Ftemp%2Frgthree.compare._temp_rgvuv_00001_rdxvv_1794812660.jpg&storageProvider=tos&bucket=rh-comfyui01&objectKey=95a57c4b31488a67692ee7e1a2da3e2a%2Ftemp%2Frgthree.compare._temp_rgvuv_00001_rdxvv_1794812660.jpg&metadata=%5Bobject+Object%5D&subfolder=&rand=0.2917584793385447&Rh-Comfy-Auth=eyJ1c2VySWQiOiI5NWE1N2M0YjMxNDg4YTY3NjkyZWU3ZTFhMmRhM2UyYSIsInNpZ25FeHBpcmUiOjE3OTU0MTY1NTkzNzUsInRzIjoxNzk0ODExNzU5Mzc1LCJzaWduIjoiMDc5YWRjYWI0YmFkMjk3NmY4MTUyMTk3YTcyNjJkZjkifQ==&Rh-Identify=95a57c4b31488a67692ee7e1a2da3e2a"
+          },
+          {
+            "name": "B",
+            "selected": true,
+            "url": "/view?filename=rgthree.compare._temp_rgvuv_00002_rhaoo_1794812662.jpg&type=temp&size=2426.47&width=1936&height=1072&label=Normal&score=0&auditDecision=PASS&auditRequestId=20261116150422F1178377667C2944556C&cos_url=https%3A%2F%2Frh-comfyui01.tos-cn-beijing.volces.com%2F95a57c4b31488a67692ee7e1a2da3e2a%2Ftemp%2Frgthree.compare._temp_rgvuv_00002_rhaoo_1794812662.jpg&storageProvider=tos&bucket=rh-comfyui01&objectKey=95a57c4b31488a67692ee7e1a2da3e2a%2Ftemp%2Frgthree.compare._temp_rgvuv_00002_rhaoo_1794812662.jpg&metadata=%5Bobject+Object%5D&subfolder=&rand=0.6072857920851767&Rh-Comfy-Auth=eyJ1c2VySWQiOiI5NWE1N2M0YjMxNDg4YTY3NjkyZWU3ZTFhMmRhM2UyYSIsInNpZ25FeHBpcmUiOjE3OTU0MTY1NTkzNzUsInRzIjoxNzk0ODExNzU5Mzc1LCJzaWduIjoiMDc5YWRjYWI0YmFkMjk3NmY4MTUyMTk3YTcyNjJkZjkifQ==&Rh-Identify=95a57c4b31488a67692ee7e1a2da3e2a"
+          }
+        ]
+      },
+      "image_a": [
+        "40",
+        0
+      ],
+      "image_b": [
+        "184",
+        0
+      ]
+    },
+    "class_type": "Image Comparer (rgthree)",
+    "_meta": {
+      "title": "Image Comparer (rgthree)"
+    }
+  }
+}

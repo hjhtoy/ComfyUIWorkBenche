@@ -20,12 +20,17 @@ async def verify(path):
         await page.evaluate("""()=>{
     const a='http://127.0.0.1:8188',b='http://127.0.0.1:8199';
     writeLocal(serverKey,[{id:'a',name:'服务器甲',url:a},{id:'b',name:'服务器乙',url:b}]);
+    const durations=[7,24.5,9,6,12,15,3,18];
+    const elapsed=[5000,2000,9000,4000,1000,6000,3000,7000];
     const records=[
       ['done','完成甲一',a],['failed','失败甲一',a],['queued','排队甲',a],
       ['done','完成甲二',a],['cancelled','取消甲',a],['lost','停止跟踪甲',a],
       ['running','运行甲',a],['done','完成乙',b]
     ].map(([state,title,base],i)=>({state,title,base,client:'fixture'+i,n:i+1,
-          endedAt:states[state] && terminal({state})?i+1:null,form:{html:title,refs:[],server:base}}));
+          duration:durations[i],
+          startedAt:terminal({state})?1000000:null,
+          endedAt:terminal({state})?1000000+elapsed[i]:null,
+          form:{html:title,refs:[],server:base}}));
     sessionStorage.setItem(sessionKey,JSON.stringify(records));
   }""")
         await page.reload()
@@ -49,6 +54,59 @@ async def verify(path):
             return await tabs.locator(".queue-tab-count").all_text_contents()
 
         assert len(await shown()) == 7
+        # Sorting by video duration and elapsed time, then by name.
+        await page.locator("#queueSort").select_option("duration:desc")
+        assert await shown() == [
+            "失败甲一",
+            "停止跟踪甲",
+            "取消甲",
+            "排队甲",
+            "完成甲一",
+            "完成甲二",
+            "运行甲",
+        ]
+        await page.locator("#queueSort").select_option("duration:asc")
+        assert await shown() == [
+            "运行甲",
+            "完成甲二",
+            "完成甲一",
+            "排队甲",
+            "取消甲",
+            "停止跟踪甲",
+            "失败甲一",
+        ]
+        # Unfinished jobs have no elapsed time yet, so they stay at the end.
+        await page.locator("#queueSort").select_option("elapsed:desc")
+        assert await shown() == [
+            "停止跟踪甲",
+            "完成甲一",
+            "完成甲二",
+            "失败甲一",
+            "取消甲",
+            "运行甲",
+            "排队甲",
+        ]
+        await page.locator("#queueSort").select_option("elapsed:asc")
+        assert await shown() == [
+            "取消甲",
+            "失败甲一",
+            "完成甲二",
+            "完成甲一",
+            "停止跟踪甲",
+            "运行甲",
+            "排队甲",
+        ]
+        await page.locator("#queueSort").select_option("name:asc")
+        by_name = await shown()
+        await page.locator("#queueSort").select_option("name:desc")
+        assert await shown() == list(reversed(by_name))
+        assert (
+            await page.evaluate(
+                "JSON.parse(localStorage.getItem('frameform.queue-sort.v1'))"
+            )
+            == "name:desc"
+        )
+        await page.locator("#queueSort").select_option("default")
         assert await counts() == ["7", "2", "2", "1", "2"]
         await select("处理中")
         assert await shown() == ["运行甲", "排队甲"]
@@ -111,6 +169,19 @@ async def verify(path):
         )
         await page.locator("#confirmDelete").click()
         assert await counts() == ["6", "1", "2", "1", "2"]
+        # The sort choice survives a reload and keeps the same order.
+        await page.get_by_role("tab", name="全部", exact=True).click()
+        await page.locator("#queueSort").select_option("name:desc")
+        by_name = await shown()
+        await page.reload()
+        await page.locator("#serverList").select_option(label="服务器甲")
+        await page.get_by_role("tab", name="全部", exact=True).click()
+        await page.wait_for_function("document.querySelectorAll('#jobs .job').length>0")
+        assert await page.locator("#queueSort").input_value() == "name:desc"
+        # Queued-but-unsent jobs never survive a reload; the rest keep the order.
+        after = await shown()
+        assert len(after) >= 5
+        assert after == [title for title in by_name if title in after]
         assert not errors, errors
         await browser.close()
         print(

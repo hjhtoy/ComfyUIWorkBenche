@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -76,11 +76,58 @@ if (process.argv.includes('--test')) {
   }
 }
 
+const desktop = join(dist, 'Frameform.html');
+const libraryBundle = join(dist, '.workflow-library.js');
+await bundle('src/library/panel.js', libraryBundle);
+
 runPython([
   builder,
   'build',
   'workflows/pika-h3.api.json',
   'workflows/pika-h3.profile.json',
-  join(dist, 'Frameform.html'),
+  desktop,
 ]);
+
+const [standalone, toolbar, libraryStyles, libraryScript] = await Promise.all([
+  readFile(desktop, 'utf8'),
+  readFile(join(root, 'src/library/panel.html'), 'utf8'),
+  readFile(join(root, 'src/library/panel.css'), 'utf8'),
+  readFile(libraryBundle, 'utf8'),
+]);
+if (process.argv.includes('--test')) {
+  const standaloneDir = join(dist, 'tests', 'standalone');
+  await mkdir(standaloneDir, { recursive: true });
+  await writeFile(join(standaloneDir, 'Frameform.html'), standalone);
+}
+const shellJSON = JSON.stringify(html).replace(/</g, '\\u003c');
+const integrated = standalone
+  .replace(
+    '<html lang="zh-CN">',
+    '<html lang="zh-CN" data-workbench-id="pika-h3">',
+  )
+  .replace(
+    '</head>',
+    () =>
+      '<style id="workflowLibraryStyles">\n' +
+      libraryStyles +
+      '</style></head>',
+  )
+  .replace(
+    '<body>',
+    () =>
+      '<body class="workbench-unified">\n' +
+      toolbar +
+      '<div id="builtinWorkbench">',
+  )
+  .replace(
+    '</body>',
+    () =>
+      '</div>\n<script type="application/json" id="workflowWorkspaceTemplate">' +
+      shellJSON +
+      '</script>\n<script>\n' +
+      libraryScript +
+      '</script>\n</body>',
+  );
+await writeFile(desktop, integrated);
+await unlink(libraryBundle);
 runPython([join(root, 'scripts', 'package_skill.py'), skill]);

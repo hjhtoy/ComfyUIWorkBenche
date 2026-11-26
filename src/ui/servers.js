@@ -1,3 +1,4 @@
+import { hosted, watchWorkspace } from '../storage/workspace.js';
 import { $, elem, button, uid } from './dom.js';
 import { normalizeServer, probe } from '../comfy/api.js';
 import { readLocal, writeLocal } from '../storage/browser.js';
@@ -20,6 +21,7 @@ function connection(text, cls = '') {
   $('connection').lastElementChild.textContent = text;
 }
 function remember(base) {
+  if (hosted) return writeLocal('frameform.server',base);
   try {
     localStorage.setItem('frameform.server', base);
   } catch {}
@@ -34,7 +36,9 @@ export function setupServers({
   let serverProfiles = readLocal(serverKey, []),
     editingServer = null;
   try {
-    const value = localStorage.getItem('frameform.server');
+    const value =
+      document.documentElement.dataset.initialServer ||
+      (hosted ? readLocal('frameform.server',null) : localStorage.getItem('frameform.server'));
     if (value) $('server').value = value;
   } catch {}
   function syncServerSelection(preferred = $('serverList').value) {
@@ -88,9 +92,9 @@ export function setupServers({
           $('addressError').textContent = '';
           $('serverName').focus();
         });
-        const remove = button('移除', () => {
+        const remove = button('移除', async () => {
           if (
-            !saveProfiles(
+            !await saveProfiles(
               readLocal(serverKey, serverProfiles).filter(
                 (item) => item.id !== p.id,
               ),
@@ -110,8 +114,8 @@ export function setupServers({
       }),
     );
   }
-  function saveProfiles(next) {
-    if (!writeLocal(serverKey, next)) {
+  async function saveProfiles(next) {
+    if (!await writeLocal(serverKey, next)) {
       $('addressError').textContent = '浏览器无法保存服务器地址。';
       return false;
     }
@@ -152,7 +156,7 @@ export function setupServers({
     $('serversDialog').showModal();
   };
   $('closeServers').onclick = () => $('serversDialog').close();
-  $('serverForm').onsubmit = (e) => {
+  $('serverForm').onsubmit = async (e) => {
     e.preventDefault();
     try {
       const name = $('serverName').value.trim(),
@@ -169,7 +173,7 @@ export function setupServers({
       const next = editingServer
         ? profiles.map((item) => (item.id === editingServer ? profile : item))
         : [...profiles, profile];
-      if (saveProfiles(next)) {
+      if (await saveProfiles(next)) {
         resetServerForm();
         useServer(profile);
       }
@@ -177,12 +181,14 @@ export function setupServers({
       $('addressError').textContent = e.message;
     }
   };
+  watchWorkspace(serverKey, profiles => { serverProfiles = profiles; renderServers(); });
   window.addEventListener('storage', (event) => {
     if (event.key !== serverKey) return;
     serverProfiles = readLocal(serverKey, []);
     renderServers();
   });
   renderServers();
+  syncServerSelection(document.documentElement.dataset.initialServerProfile);
   $('test').onclick = async () => {
     const revision = ++testRevision;
     $('serverError').textContent = '';

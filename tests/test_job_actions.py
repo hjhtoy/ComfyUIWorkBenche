@@ -52,7 +52,7 @@ async def verify():
         async with page.expect_download() as result:
             await row1.get_by_role("button", name="下载", exact=True).click()
         saved = await result.value
-        assert saved.suggested_filename == "同名.mp4"
+        assert saved.suggested_filename == "任务甲.mp4"
         assert Path(await saved.path()).read_bytes() == b"video-1"
 
         for row in [row1, row2, row3]:

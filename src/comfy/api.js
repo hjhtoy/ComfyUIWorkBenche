@@ -1,3 +1,11 @@
+import { comfyURL, hosted, workspaceRequest } from '../storage/workspace.js';
+const runninghubHost = (value) => {
+  try {
+    return /^(www\.)?runninghub\.(cn|ai)$/i.test(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+};
 function normalizeServer(value) {
   let u;
   try {
@@ -43,7 +51,7 @@ async function api(base, path, options = {}, timeout = 12000) {
     const signal = options.signal
       ? AbortSignal.any([controller.signal, options.signal])
       : controller.signal;
-    const response = await fetch(base + path, {
+    const response = await fetch(comfyURL(base,path), {
       cache: 'no-store',
       ...options,
       signal,
@@ -85,19 +93,27 @@ const post = (data) => ({
 });
 function outputURL(j, x) {
   return (
-    j.base +
-    '/view?' +
+    comfyURL(j.base, '/view?' +
     new URLSearchParams({
       filename: x.filename,
       subfolder: x.subfolder,
       type: x.type,
-    })
+    }))
   );
 }
 async function probe(base, signal) {
+  // The RunningHub OpenAPI has no /system_stats; its key lives on the host.
+  if (runninghubHost(base)) {
+    if (!hosted)
+      throw Error('RunningHub 需要以工作区模式打开（npm start），浏览器直连会被跨域拦截。');
+    const data = await workspaceRequest('provider');
+    if (!data.runninghub)
+      throw Error('请先在设置 → RunningHub 中配置 API Key。');
+    return;
+  }
   const stats = await api(base, '/system_stats', { signal });
   if (!stats.system || !Array.isArray(stats.devices))
     throw Error('该地址没有返回 ComfyUI 系统信息，请检查端口和代理路径。');
 }
 
-export { normalizeServer, api, post, outputURL, probe };
+export { normalizeServer, api, post, outputURL, probe, runninghubHost };

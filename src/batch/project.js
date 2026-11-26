@@ -1,9 +1,21 @@
-import { profile } from '../comfy/config.js';
+import {
+  profile,
+  template,
+  durationInFrames,
+  durationFieldValue,
+  durationSeconds,
+} from '../comfy/config.js';
 import { referenceTag, materialLimit, slotsFor } from '../comfy/references.js';
 import { materialKinds, materialKind, materialSpecs } from '../media/types.js';
 
 const filenameCollator = new Intl.Collator('zh-Hans', { numeric: true });
 const nameKey = (value) => String(value).normalize('NFC');
+const materialBoundary = /[\s，。；：、！？（）【】《》「」『』“”‘’,;:!?()[\]{}"'<>]/u;
+// A filename is often joined to its tag by prose ("...png，见 <Picture 1>",
+// "...png as <Picture 1>"). Peeling these connectors off keeps the binding.
+const materialConnector =
+  /(?:[ \t\u00a0\u3000]+|[，,、。．；;：:！!？?…·—\-（）()【】\[\]「」『』“”"'`]|\b(?:as|from|with|using|in|into|for|to|is|at|by|of)\b|见|参看|参考|参照|如图|如下图|如下|所示|对应|即|图)$/iu;
+const trailingSpace = /[ \t\u00a0\u3000]+$/;
 const materialTagKinds = Object.fromEntries(
   materialKinds.map((kind) => [materialSpecs[kind].tag.toLowerCase(), kind]),
 );
@@ -26,38 +38,55 @@ function projectDuration(fileName, text, errors) {
   if (unique.length > 1) errors.push('正文出现不同的目标时长');
   const duration = unique[0] ?? fromName;
   if (duration === undefined) {
+    // Image workflows have no duration control; a single storyboard may omit it.
+    if (!profile.duration) return undefined;
     errors.push('找不到视频时长');
     return undefined;
   }
-  if (fromName !== undefined && unique.length && fromName !== unique[0])
-    errors.push('正文 ' + duration + ' 秒与文件名 ' + fromName + ' 秒不一致');
-  const { min, max, increment: step = 1 } = profile.duration;
-  const units = (duration - min) / step;
+  if (!profile.duration) return undefined;
+  const { field: [node, key], min, max, increment: step = 1 } = profile.duration;
+  // A whole-second UI slider can still target a floating-point seconds input.
+  const fractionalSeconds = !durationInFrames && step === 1 &&
+    template[node]?.class_type === 'PrimitiveFloat' && key === 'value';
+  const value = durationFieldValue(duration);
+  const units = (value - min) / step;
   if (
     !Number.isFinite(duration) ||
-    duration < min ||
-    duration > max ||
-    Math.abs(units - Math.round(units)) > 1e-6
-  )
-    errors.push(
-      '时长不在当前工作流支持范围内（' +
-        min +
-        '–' +
-        max +
-        ' 秒，间隔 ' +
-        step +
-        ' 秒）',
-    );
-  return duration;
+    duration <= 0 ||
+    value < min ||
+    value > max ||
+    (!fractionalSeconds && Math.abs(units - Math.round(units)) > 1e-6)
+  ) {
+    const unit = durationInFrames ? '帧' : '秒';
+    const interval = fractionalSeconds ? '' : `，间隔 ${step} ${unit}`;
+    errors.push(`时长不在当前工作流支持范围内（${min}–${max} ${unit}${interval}）`);
+  }
+  return durationSeconds(value);
 }
-function resolveProjectMaterial(before, catalog) {
-  if (!/[ \t\u00a0\u3000]$/.test(before)) return null;
-  const value = before.replace(/[ \t\u00a0\u3000]+$/, '');
+function matchProjectMaterial(value, catalog) {
   for (const name of catalog.names) {
     if (!value.endsWith(name)) continue;
     const offset = value.length - name.length;
-    if (offset === 0 || /\s/.test(value[offset - 1])) return { name, offset };
+    if (offset === 0 || materialBoundary.test(value[offset - 1]))
+      return { name, offset };
   }
+  return null;
+}
+function resolveProjectMaterial(before, catalog) {
+  if (!/[ \t\u00a0\u3000]$/.test(before)) return null;
+  let value = before.replace(trailingSpace, '');
+  // Strip the shortest connector first so trailing prose stays in the prompt.
+  for (let pass = 0; pass < 8; pass++) {
+    const found = matchProjectMaterial(value, catalog);
+    if (found) return found;
+    const shorter = value.replace(materialConnector, '').replace(trailingSpace, '');
+    if (shorter === value) break;
+    value = shorter;
+  }
+  // Report just the filename when a reference following prose is genuinely missing.
+  const token = value.split(materialBoundary).pop();
+  if (/^.+\.[A-Za-z0-9]{1,5}$/.test(token))
+    return { name: token, offset: value.length - token.length };
   return null;
 }
 function parseScene(name, source, catalog) {
@@ -105,6 +134,10 @@ function parseScene(name, source, catalog) {
     if (resolved) {
       edit.start = lineStart + resolved.offset;
       const candidates = catalog.files.get(resolved.name);
+      if (!candidates) {
+        errors.push('assets 中找不到 ' + resolved.name);
+        continue;
+      }
       if (candidates.length !== 1) {
         errors.push('存在同名素材 ' + resolved.name);
         continue;
@@ -128,14 +161,6 @@ function parseScene(name, source, catalog) {
         name: resolved.name,
         file: candidates[0],
       });
-    } else {
-      const missing = before.match(
-        /(?:^|[ \t\u00a0\u3000])([^\s<>]+\.[A-Za-z0-9]{1,5})[ \t\u00a0\u3000]+$/,
-      );
-      if (missing) {
-        errors.push('assets 中找不到 ' + missing[1]);
-        continue;
-      }
     }
     edits.push(edit);
   }
@@ -181,23 +206,46 @@ function parseScene(name, source, catalog) {
   };
 }
 async function readBatchProject(files, settings) {
-  const catalog = { files: new Map(), names: [] },
-    prompts = [];
-  let root = '';
+  const catalog = { files: new Map(), names: [] };
+  // Accept any nesting: "<root>/prompts/x.txt" or "parent/<root>/prompts/x.txt".
+  const projects = new Map();
   for (const file of files) {
     const parts = file.webkitRelativePath.split('/');
     if (parts.length < 3) continue;
-    if (!root) root = parts[0];
-    if (parts[0] !== root) continue;
+    const index = parts.lastIndexOf('prompts', parts.length - 2);
+    if (index < 1 || parts.length !== index + 2) continue;
+    if (!/\.txt$/i.test(file.name) || file.name.startsWith('.')) continue;
+    const rootPath = parts.slice(0, index).join('/');
+    if (!projects.has(rootPath)) projects.set(rootPath, []);
+    projects.get(rootPath).push(file);
+  }
+  const rootPaths = [...projects.keys()];
+  if (rootPaths.length > 1)
+    throw Error(
+      '所选目录中有多个项目（' +
+        rootPaths.map((path) => path.split('/').pop()).join('、') +
+        '），请选择其中一个项目根目录。',
+    );
+  if (!rootPaths.length) {
+    const insidePrompts = files.some(
+      (file) => file.webkitRelativePath.split('/')[0] === 'prompts',
+    );
+    throw Error(
+      insidePrompts
+        ? '所选目录是 prompts 本身，请选择它的上一级项目根目录（同级要有 assets）。'
+        : '未找到 prompts 下的 TXT。请选择包含 prompts 和 assets 的项目根目录。',
+    );
+  }
+  const rootPath = rootPaths[0];
+  const root = rootPath.split('/').pop();
+  const rootParts = rootPath.split('/');
+  const prompts = projects.get(rootPath);
+  for (const file of files) {
+    const parts = file.webkitRelativePath.split('/');
+    if (parts.length < rootParts.length + 2) continue;
+    if (!rootParts.every((part, index) => parts[index] === part)) continue;
     if (
-      parts[1] === 'prompts' &&
-      parts.length === 3 &&
-      /\.txt$/i.test(file.name) &&
-      !file.name.startsWith('.')
-    )
-      prompts.push(file);
-    if (
-      parts[1] !== 'assets' ||
+      parts[rootParts.length] !== 'assets' ||
       file.name.startsWith('.') ||
       !materialKind(file.name)
     )
@@ -206,10 +254,6 @@ async function readBatchProject(files, settings) {
     if (!catalog.files.has(key)) catalog.files.set(key, []);
     catalog.files.get(key).push(file);
   }
-  if (!prompts.length)
-    throw Error(
-      '未找到 prompts 下的 TXT。请选择包含 prompts 和 assets 的项目根目录。',
-    );
   catalog.names = [...catalog.files.keys()].sort((a, b) => b.length - a.length);
   prompts.sort((a, b) => filenameCollator.compare(a.name, b.name));
   const scenes = await Promise.all(
@@ -230,3 +274,19 @@ async function readBatchProject(files, settings) {
 }
 
 export { readBatchProject };
+
+// One storyboard TXT dropped into the prompt editor: the same parsing rules as a
+// batch import, but the materials come from the library instead of the folder.
+export function parseStoryboard(name, source, materials) {
+  const files = new Map();
+  for (const { name: materialName, item } of materials) {
+    const key = nameKey(materialName);
+    if (!files.has(key)) files.set(key, []);
+    files.get(key).push(item);
+  }
+  const catalog = {
+    files,
+    names: [...files.keys()].sort((a, b) => b.length - a.length),
+  };
+  return parseScene(name, source, catalog);
+}

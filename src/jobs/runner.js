@@ -1,8 +1,18 @@
 import { $, uid } from '../ui/dom.js';
 import { currentQueueBase, connection, remember } from '../ui/servers.js';
 import { api, post, probe } from '../comfy/api.js';
-import { template, profile, legacyFrameform } from '../comfy/config.js';
-import { buildGraph, matchWorkflow, graphJobData } from '../comfy/workflow.js';
+import {
+  template,
+  profile,
+  legacyFrameform,
+  workbenchId,
+} from '../comfy/config.js';
+import {
+  buildGraph,
+  matchWorkflow,
+  graphJobData,
+  outputNodeIds,
+} from '../comfy/workflow.js';
 import { materialSpecs, materialKind } from '../media/types.js';
 import { mediaFiles, saveOutputs } from '../media/outputs.js';
 import { jobs, terminal, startClock, serverJobKey } from './state.js';
@@ -12,6 +22,7 @@ import { persist, readRemovedJobs } from '../storage/jobs.js';
 
 export function setupRunner({ render, updateQueueTools }) {
   let submitting = false;
+  const mappedOutputs = workbenchId && !legacyFrameform;
 
   function finish(j, state, note) {
     if (terminal(j) || j.removed) return;
@@ -69,7 +80,13 @@ export function setupRunner({ render, updateQueueTools }) {
       entry.status?.status_str === 'success' ||
       (!entry.status && entry.outputs)
     ) {
-      j.results = mediaFiles(entry.outputs);
+      const outputs = entry.outputs || {};
+      const selected = mappedOutputs
+        ? Object.fromEntries(
+            (j.outputNodes ?? profile.outputs).map((id) => [id, outputs[id]]),
+          )
+        : outputs;
+      j.results = mediaFiles(selected);
       if (!j.results.length)
         finish(
           j,
@@ -381,10 +398,15 @@ export function setupRunner({ render, updateQueueTools }) {
         paths.push(path);
       }
       if (terminal(j)) return;
+      const graph = buildGraph(j, paths);
+      if (mappedOutputs) j.outputNodes = outputNodeIds(graph);
       body = post({
-        prompt: buildGraph(j, paths),
+        prompt: graph,
         client_id: j.client,
         prompt_id: j.client,
+        ...(workbenchId && {
+          extra_data: { frameform_workflow_id: workbenchId },
+        }),
       });
     } catch (e) {
       if (
@@ -466,6 +488,12 @@ export function setupRunner({ render, updateQueueTools }) {
       for (const row of queue.queue_running) {
         if (!Array.isArray(row)) continue;
         const [, id, graph, meta] = row;
+        if (
+          workbenchId &&
+          meta?.frameform_workflow_id &&
+          meta.frameform_workflow_id !== workbenchId
+        )
+          continue;
         const client = serverJobKey(base, id);
         if (
           typeof id !== 'string' ||
@@ -479,6 +507,7 @@ export function setupRunner({ render, updateQueueTools }) {
         if (!mapped) continue;
         const job = {
           ...graphJobData(base, graph, mapped),
+          ...(mappedOutputs && { outputNodes: outputNodeIds(graph, mapped) }),
           base,
           id,
           client,

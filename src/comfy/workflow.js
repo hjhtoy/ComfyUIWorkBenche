@@ -10,6 +10,8 @@ import {
   writeField,
   stepsFrom,
   pixelDimensions,
+  durationSeconds,
+  durationFieldValue,
 } from './config.js';
 import {
   groupPaths,
@@ -19,9 +21,24 @@ import {
 } from './references.js';
 import { materialKinds } from '../media/types.js';
 import { formatServerPrompt } from '../ui/mentions.js';
+import {
+  advancedDefinitions,
+  fieldKey,
+  filterAdvancedValues,
+} from './advanced.js';
+
+const advanced = advancedDefinitions(template, profile);
+const editableSeed = advanced.some(
+  ({ field }) => fieldKey(field) === fieldKey(profile.seed),
+);
 
 function buildGraph(j, paths) {
   const graph = JSON.parse(JSON.stringify(template));
+  const overrides = filterAdvancedValues(template, advanced, j.form?.advanced);
+  for (const { field } of advanced) {
+    const key = fieldKey(field);
+    if (Object.hasOwn(overrides, key)) writeField(graph, field, overrides[key]);
+  }
   const grouped = groupPaths(j, paths);
   // The original Frameform strips stray image loaders left in the H3 export.
   const unused = new Set();
@@ -51,7 +68,8 @@ function buildGraph(j, paths) {
   }
   bindDynamicH3(graph, grouped);
   if (profile.prompt) writeField(graph, profile.prompt, j.prompt);
-  if (profile.duration) writeField(graph, profile.duration.field, j.duration);
+  if (profile.duration)
+    writeField(graph, profile.duration.field, durationFieldValue(j.duration));
   if (sizeConfig?.mode === 'selector') {
     writeField(graph, sizeConfig.ratio, ratios[j.ratio]);
     writeField(graph, sizeConfig.megapixels, j.mp);
@@ -60,7 +78,7 @@ function buildGraph(j, paths) {
     writeField(graph, sizeConfig.width, width);
     writeField(graph, sizeConfig.height, height);
   }
-  if (profile.seed)
+  if (profile.seed && !editableSeed)
     writeField(
       graph,
       profile.seed,
@@ -114,6 +132,7 @@ const mutableFields = [
   sizeConfig?.width,
   sizeConfig?.height,
   ...(profile.matchIgnore || []),
+  ...advanced.map(({ field }) => field),
   ...slots.flatMap((slot) => slot.targets),
 ].filter(Boolean);
 const mutableFieldKeys = new Set(
@@ -169,7 +188,7 @@ function matchWorkflow(graph) {
 }
 function graphJobData(base, graph, mapped) {
   const read = (pair) => pair && graph[mapped.get(pair[0])]?.inputs?.[pair[1]];
-  const duration = read(profile.duration?.field),
+  const duration = durationSeconds(read(profile.duration?.field)),
     steps = stepsFrom(read(profile.steps?.field));
   const ratio = Object.keys(ratios).find(
     (key) => ratios[key] === read(sizeConfig?.ratio),
@@ -200,6 +219,13 @@ function graphJobData(base, graph, mapped) {
     mp,
     duration,
     steps,
+    advanced: filterAdvancedValues(
+      template,
+      advanced,
+      Object.fromEntries(
+        advanced.map(({ field }) => [fieldKey(field), read(field)]),
+      ),
+    ),
   };
   return {
     form,
@@ -210,4 +236,27 @@ function graphJobData(base, graph, mapped) {
   };
 }
 
-export { buildGraph, matchWorkflow, graphJobData };
+function outputNodeIds(graph, mapped) {
+  const ids = profile.outputs.map((id) => mapped?.get(id) ?? id);
+  if (!profile.firstFrame) return ids;
+  const [source, index] = profile.firstFrame;
+  const frameSource = mapped?.get(source) ?? source;
+  const prefix = profile.firstFramePrefix || 'Frameform/first_frame';
+  for (const [id, node] of Object.entries(graph)) {
+    if (
+      node.class_type !== 'SaveImage' ||
+      node.inputs.filename_prefix !== prefix
+    )
+      continue;
+    const batch = graph[node.inputs.images?.[0]];
+    if (
+      batch?.class_type === 'ImageFromBatch' &&
+      batch.inputs.image?.[0] === frameSource &&
+      batch.inputs.image?.[1] === index
+    )
+      ids.push(id);
+  }
+  return ids;
+}
+
+export { buildGraph, matchWorkflow, graphJobData, outputNodeIds };

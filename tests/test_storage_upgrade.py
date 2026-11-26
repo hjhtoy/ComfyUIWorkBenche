@@ -127,9 +127,10 @@ async def verify():
             await page.locator(".job-name", has_text="刷新前的活动任务").wait_for()
             assert await page.locator(".job-name", has_text="已删除任务").count() == 0
             await page.locator("#openSettings").click()
-            assert await page.locator("#autoCache").is_checked()
+            await page.locator("#pickDirectory").wait_for(state="visible")
             await page.locator("#closeSettings").click()
             await page.locator("#addRef").click()
+            await page.get_by_role("button", name="未分类", exact=True).click()
             await page.locator(".material-thumb", has_text="旧参考.png").wait_for()
             await page.locator("#closePicker").click()
             await page.locator(".job", has_text="旧任务").locator(".job-cover").click()

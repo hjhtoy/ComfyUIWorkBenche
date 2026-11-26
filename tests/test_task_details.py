@@ -73,6 +73,9 @@ async def main():
         await dialog.wait_for(state="visible")
         assert await dialog.get_by_role("heading", name="已取消").count() == 1
         assert await dialog.get_by_text("取消任务的原始提示词", exact=True).count() == 1
+        assert await page.evaluate("snapshot().prompt") == "场景 <Picture 1> 复用测试"
+        assert await page.locator("#duration").input_value() == "8"
+        assert await page.locator("#steps").input_value() == "10"
         assert await dialog.locator("#download").is_hidden()
         assert await dialog.locator("video").count() == 0
         await dialog.locator("#reuse").click()
@@ -95,9 +98,17 @@ async def main():
             .click()
         )
         assert await dialog.is_hidden()
+        await page.get_by_role("button", name="查看任务详情 4 · 生成中").click()
+        await dialog.get_by_role("heading", name="生成中", exact=True).wait_for()
+        await dialog.locator("#playerPrompt").filter(has_text="复用测试").wait_for()
+        assert await dialog.locator("#download").is_hidden()
+        await page.evaluate("finish(jobs.find(j => j.client === 'active'), 'failed', '运行中断')")
+        await dialog.get_by_role("heading", name="失败", exact=True).wait_for()
+        assert await dialog.get_by_text("运行中断", exact=True).is_visible()
+        assert await dialog.locator("#download").is_hidden()
         assert not errors, errors
         print(
-            "PASS: failed and cancelled open details, hidden downloads and absent player, status/ref previews, reuse restores parameters, success and active unchanged"
+            "PASS: task details, parameter reuse, and live preview through execution failure"
         )
         await browser.close()
 

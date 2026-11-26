@@ -94,13 +94,10 @@ async def main():
         await page.get_by_text("已连接", exact=True).wait_for()
         await page.locator("#test").wait_for(state="visible")
         assert await page.locator(".job").count() == 1
+        await page.locator("#editor").fill("同步任务时保留草稿")
         await page.locator(".job-name").click()
-        await page.get_by_text("草稿已保存").wait_for()
-        assert (
-            await page.evaluate("snapshot().prompt")
-            == "角色<Picture 1>回头。\n再次看到<Picture 1>。"
-        )
-        assert any("subfolder=folder" in url for url in reference_reads)
+        assert await page.evaluate("snapshot().prompt") == "同步任务时保留草稿"
+        assert not reference_reads
         assert not websockets
         await page.reload()
         await page.get_by_text("草稿已保存").wait_for()
@@ -123,6 +120,15 @@ async def main():
         }
         await page.get_by_text("已完成", exact=True).wait_for()
         assert await page.get_by_text("总耗时 01:31", exact=True).count() == 1
+        await page.locator(".job-name").click()
+        assert await page.evaluate("snapshot().prompt") == "同步任务时保留草稿"
+        await page.locator("#reuse").click()
+        await page.get_by_text("草稿已保存").wait_for()
+        assert (
+            await page.evaluate("snapshot().prompt")
+            == "角色<Picture 1>回头。\n再次看到<Picture 1>。"
+        )
+        assert any("subfolder=folder" in url for url in reference_reads)
         assert (
             await page.locator(".job")
             .get_by_role("button", name="下载", exact=True)

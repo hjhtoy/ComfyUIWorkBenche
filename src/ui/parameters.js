@@ -6,6 +6,8 @@ import {
   readField,
   sizeConfig,
   defaultDuration,
+  durationInFrames,
+  durationSeconds,
   defaultRatio,
   directSizes,
   fps,
@@ -13,9 +15,8 @@ import {
   stepsFrom,
 } from '../comfy/config.js';
 
-function updateSizeOptions(requestedMP) {
+function populateSizeOptions(select, ratio, requestedMP) {
   if (!sizeConfig) return;
-  const select = $('size');
   if (sizeConfig.mode === 'preset') {
     const value = requestedMP ?? Number(select.value);
     select.replaceChildren(
@@ -31,10 +32,11 @@ function updateSizeOptions(requestedMP) {
     ? (mp) => mp >= Math.min(...options) && mp <= Math.max(...options)
     : (mp) => choices.includes(mp);
   const current = select.value === '' ? initial : Number(select.value);
-  const selected = legacyFrameform && !allowed(requestedMP)
-    ? current
-    : requestedMP ?? current;
-  const labelFor = (mp) => pixelDimensions($('ratio').value, mp);
+  const selected =
+    legacyFrameform && !allowed(requestedMP)
+      ? current
+      : (requestedMP ?? current);
+  const labelFor = (mp) => pixelDimensions(ratio, mp);
   const commonSizes = sizeConfig.commonMegapixels || [];
   const popular = new Map(
     (legacyFrameform ? commonSizes : [initial, ...commonSizes]).map((mp) => [
@@ -54,9 +56,11 @@ function updateSizeOptions(requestedMP) {
   select.replaceChildren(common, ...(more.childElementCount ? [more] : []));
   if ([...unique.values()].includes(selected)) select.value = String(selected);
 }
-function setupSlider(id, config, value, unit) {
-  const input = $(id),
-    group = input.closest('.slider');
+function updateSizeOptions(requestedMP) {
+  populateSizeOptions($('size'), $('ratio').value, requestedMP);
+}
+function setupSlider(input, config, value, unit) {
+  const group = input.closest('.slider');
   group.hidden = !config;
   if (!config) return;
   input.min = config.min;
@@ -68,32 +72,48 @@ function setupSlider(id, config, value, unit) {
   ends[1].textContent = config.max + unit;
 }
 
-function setupParameters() {
-  $('size').closest('.size-field').hidden = !sizeConfig;
-  $('ratio').closest('label').hidden = !defaultRatio;
-  $('ratio').replaceChildren(
-    ...Object.keys(ratios).map((ratio) => new Option(ratio, ratio)),
+function setupPictureControls({ ratio, size, steps }) {
+  size.closest('label.size-field, .size-field').hidden = !sizeConfig;
+  ratio.closest('label').hidden = !defaultRatio;
+  ratio.replaceChildren(
+    ...Object.keys(ratios).map((value) => new Option(value, value)),
   );
-  if (defaultRatio) $('ratio').value = defaultRatio;
+  if (defaultRatio) ratio.value = defaultRatio;
   setupSlider(
-    'steps',
+    steps,
     profile.steps,
     stepsFrom(readField(profile.steps?.field)),
     '',
   );
-  setupSlider('duration', profile.duration, defaultDuration, ' 秒');
-  updateSizeOptions();
+  populateSizeOptions(size, ratio.value);
+}
+function setupParameters() {
+  setupPictureControls({
+    ratio: $('ratio'),
+    size: $('size'),
+    steps: $('steps'),
+  });
+  setupSlider(
+    $('duration'),
+    profile.duration,
+    defaultDuration,
+    durationInFrames ? ' 帧' : ' 秒',
+  );
   controls();
 }
 function controls() {
   $('stepval').value = $('steps').value;
-  const seconds = $('duration').valueAsNumber;
-  $('durationValue').value = seconds + ' 秒';
-  $('duration').setAttribute('aria-valuetext', seconds + ' 秒');
+  const value = $('duration').valueAsNumber;
+  const seconds = durationSeconds(value);
+  const label = value + (durationInFrames ? ' 帧' : ' 秒');
+  $('durationValue').value = label;
+  $('duration').setAttribute('aria-valuetext', label);
   const timing = [];
   if (profile.duration) {
     const alignment = profile.duration.alignment;
-    if (alignment && fps) {
+    if (durationInFrames) {
+      timing.push('时长 ' + seconds.toFixed(2) + ' 秒');
+    } else if (alignment && fps) {
       const requested = Math.max(alignment.base, Math.round(seconds * fps));
       const frames =
         alignment.base +
@@ -107,21 +127,44 @@ function controls() {
   if (fps) timing.push(fps + ' fps');
   if (legacyFrameform) timing.push('MP4');
   $('timing').textContent = timing.join('　·　');
-  for (const input of [$('steps'), $('duration')]) {
-    if (Number(input.max) > Number(input.min)) {
-      const p = (100 * (input.value - input.min)) / (input.max - input.min);
-      input.style.setProperty('--fill', p + '%');
-    }
+  updateSliderFill($('steps'));
+  updateSliderFill($('duration'));
+}
+function updateSliderFill(input) {
+  if (Number(input.max) > Number(input.min)) {
+    const progress =
+      (100 * (input.value - input.min)) / (input.max - input.min);
+    input.style.setProperty('--fill', progress + '%');
   }
+}
+function pictureSettings({ ratio, size, steps }) {
+  return {
+    steps: profile.steps ? steps.valueAsNumber : undefined,
+    mp: sizeConfig ? Number(size.value) : undefined,
+    ratio: defaultRatio ? ratio.value : undefined,
+    dimensions: size.selectedOptions[0]?.text,
+  };
 }
 function generationSettings() {
   return {
-    duration: profile.duration ? $('duration').valueAsNumber : undefined,
-    steps: profile.steps ? $('steps').valueAsNumber : undefined,
-    mp: sizeConfig ? Number($('size').value) : undefined,
-    ratio: defaultRatio ? $('ratio').value : undefined,
-    dimensions: $('size').selectedOptions[0]?.text,
+    ...pictureSettings({
+      ratio: $('ratio'),
+      size: $('size'),
+      steps: $('steps'),
+    }),
+    duration: profile.duration
+      ? durationSeconds($('duration').valueAsNumber)
+      : undefined,
   };
 }
 
-export { setupParameters, updateSizeOptions, controls, generationSettings };
+export {
+  setupParameters,
+  updateSizeOptions,
+  controls,
+  generationSettings,
+  setupPictureControls,
+  pictureSettings,
+  populateSizeOptions,
+  updateSliderFill,
+};

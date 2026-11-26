@@ -1,26 +1,78 @@
 import { $, elem } from '../ui/dom.js';
 import { mentionChip } from '../ui/mentions.js';
 import { serverAddress } from '../ui/servers.js';
-import { generationSettings } from '../ui/parameters.js';
+import {
+  setupPictureControls,
+  pictureSettings,
+  populateSizeOptions,
+  updateSliderFill,
+} from '../ui/parameters.js';
+import { advancedSettings } from '../ui/advanced-parameters.js';
+import { pageKey, readLocal, writeLocal } from '../storage/browser.js';
 import { profile } from '../comfy/config.js';
 import { materialKinds, materialSpecs } from '../media/types.js';
 import { readBatchProject } from './project.js';
 
 export function setupBatch(
-  { editor, assetRecord, importMaterial, restoreMaterialLibrary },
+  {
+    editor,
+    assetRecord,
+    importMaterial,
+    restoreMaterialLibrary,
+    fileMaterials,
+  },
   { enqueue, submitWaiting },
   { activateQueueTab, queueNotice },
 ) {
   const batchDialog = $('batchDialog');
+  const picture = {
+    ratio: $('batchRatio'),
+    size: $('batchSize'),
+    steps: $('batchSteps'),
+  };
+  const preferencesKey = 'frameform.batch.v1.' + pageKey;
+  setupPictureControls(picture);
+  const advanced = advancedSettings('batchAdvanced', '批量生成', saveSettings);
+  const saved = readLocal(preferencesKey, {});
+  if ([...picture.ratio.options].some((option) => option.value === saved.ratio))
+    picture.ratio.value = saved.ratio;
+  populateSizeOptions(picture.size, picture.ratio.value, saved.mp);
+  if (Number.isInteger(saved.steps)) picture.steps.value = saved.steps;
+  advanced.set(saved.advanced);
+  refreshSteps();
+
+  function refreshSteps() {
+    $('batchStepsValue').value = picture.steps.value;
+    updateSliderFill(picture.steps);
+  }
+  async function saveSettings() {
+    const settings = {
+      ...pictureSettings(picture),
+      advanced: advanced.snapshot(),
+    };
+    $('batchSettingsStatus').textContent = await writeLocal(preferencesKey, settings)
+      ? ''
+      : '浏览器无法保存批量参数。';
+    if (batchPreview) renderBatchPreview();
+  }
+  picture.ratio.onchange = () => {
+    populateSizeOptions(picture.size, picture.ratio.value);
+    saveSettings();
+  };
+  picture.size.onchange = saveSettings;
+  picture.steps.oninput = () => {
+    refreshSteps();
+    saveSettings();
+  };
   let batchPreview = null;
   let batchRevision = 0;
   let batchBusy = false;
+  let selectedScenes = new Set();
   function formatSceneDuration(seconds) {
-    return Number.isFinite(seconds) ? seconds + ' 秒' : '—';
+    return Number.isFinite(seconds) ? Number(seconds.toFixed(2)) + ' 秒' : '—';
   }
   function batchSettings() {
     return {
-      ...generationSettings(),
       base: serverAddress(),
       serverProfileId: $('serverList').value,
       editorHeight: editor.style.height,
@@ -28,6 +80,9 @@ export function setupBatch(
   }
   function resetBatchPreview() {
     batchPreview = null;
+    selectedScenes.clear();
+    $('batchSelectAll').checked = false;
+    $('batchSelectAll').indeterminate = false;
     $('batchProjectName').textContent = '';
     $('batchError').textContent = '';
     $('batchRows').replaceChildren();
@@ -36,9 +91,36 @@ export function setupBatch(
     $('batchEnqueue').disabled = true;
     $('batchEnqueue').textContent = '批量加入队列';
   }
+  function updateBatchSelection() {
+    if (!batchPreview) return;
+    const { scenes } = batchPreview;
+    const selectable = scenes.flatMap((scene, index) =>
+      scene.errors.length ? [] : [index],
+    );
+    const chosen = selectable.filter((index) => selectedScenes.has(index));
+    const all = $('batchSelectAll');
+    all.disabled = batchBusy || !selectable.length;
+    all.checked = !!selectable.length && chosen.length === selectable.length;
+    all.indeterminate = chosen.length > 0 && chosen.length < selectable.length;
+    $('batchSummary').textContent =
+      '共 ' +
+      scenes.length +
+      ' 条 · 可提交 ' +
+      selectable.length +
+      ' 条 · 已选 ' +
+      chosen.length +
+      ' 条' +
+      (selectable.length < scenes.length
+        ? ' · 跳过 ' + (scenes.length - selectable.length) + ' 条'
+        : '');
+    $('batchEnqueue').disabled = batchBusy || !chosen.length;
+    $('batchEnqueue').textContent = chosen.length
+      ? '将 ' + chosen.length + ' 条加入生成队列'
+      : '批量加入队列';
+  }
   function renderBatchPreview() {
-    const { root, settings, scenes } = batchPreview;
-    const ready = scenes.filter((scene) => !scene.errors.length).length;
+    const { root, scenes } = batchPreview;
+    const settings = { ...batchPreview.settings, ...pictureSettings(picture) };
     $('batchProjectName').textContent =
       root +
       ' · ' +
@@ -50,19 +132,22 @@ export function setupBatch(
       ]
         .filter(Boolean)
         .join(' · ');
-    $('batchSummary').textContent =
-      '共 ' +
-      scenes.length +
-      ' 条 · 可提交 ' +
-      ready +
-      ' 条' +
-      (ready < scenes.length
-        ? ' · 跳过 ' + (scenes.length - ready) + ' 条'
-        : '');
     $('batchTableWrap').hidden = false;
     $('batchRows').replaceChildren(
-      ...scenes.map((scene) => {
+      ...scenes.map((scene, index) => {
         const row = elem('tr');
+        const select = elem('input');
+        select.type = 'checkbox';
+        select.checked = selectedScenes.has(index) && !scene.errors.length;
+        select.disabled = !!scene.errors.length;
+        select.setAttribute('aria-label', '选择 ' + scene.name);
+        select.onchange = () => {
+          if (select.checked) selectedScenes.add(index);
+          else selectedScenes.delete(index);
+          updateBatchSelection();
+        };
+        const selectCell = elem('td', 'batch-select');
+        selectCell.append(select);
         const counts = Object.fromEntries(
           materialKinds.map((kind) => [kind, 0]),
         );
@@ -74,6 +159,7 @@ export function setupBatch(
         const details = elem('td', '', description || '—');
         details.title = scene.assets.map((slot) => slot.name).join('\n');
         row.append(
+          selectCell,
           elem('td', 'batch-scene-name', scene.name),
           elem('td', 'mono', formatSceneDuration(scene.duration)),
           details,
@@ -86,10 +172,7 @@ export function setupBatch(
         return row;
       }),
     );
-    $('batchEnqueue').disabled = batchBusy || !ready;
-    $('batchEnqueue').textContent = ready
-      ? '将 ' + ready + ' 条加入生成队列'
-      : '批量加入队列';
+    updateBatchSelection();
   }
   function makeBatchJob(scene, settings, loaded, batchUploads) {
     const bindings = new Map(),
@@ -131,6 +214,7 @@ export function setupBatch(
       steps,
       duration: scene.duration,
       height: editorHeight,
+      advanced: { ...settings.advanced },
     };
     return {
       prompt: scene.prompt,
@@ -148,6 +232,16 @@ export function setupBatch(
       duration: scene.duration,
     };
   }
+  $('batchSelectAll').onchange = () => {
+    if (!batchPreview) return;
+    const on = $('batchSelectAll').checked;
+    selectedScenes.clear();
+    if (on)
+      batchPreview.scenes.forEach((scene, index) => {
+        if (!scene.errors.length) selectedScenes.add(index);
+      });
+    renderBatchPreview();
+  };
   $('openBatch').onclick = () => {
     if (!batchDialog.open) batchDialog.showModal();
   };
@@ -156,6 +250,7 @@ export function setupBatch(
     if (batchDialog.open) return;
     batchRevision++;
     batchBusy = false;
+    $('batchPicture').disabled = false;
     $('chooseBatchFolder').disabled = false;
     $('batchProgress').textContent = '';
     resetBatchPreview();
@@ -189,12 +284,21 @@ export function setupBatch(
   };
   $('batchEnqueue').onclick = async () => {
     if (batchBusy || !batchPreview) return;
-    const revision = batchRevision,
-      { settings, scenes } = batchPreview;
-    const preflight = scenes.filter((scene) => !scene.errors.length);
+    const revision = batchRevision;
+    const { root, scenes } = batchPreview;
+    const settings = {
+      ...batchPreview.settings,
+      ...pictureSettings(picture),
+      advanced: advanced.snapshot(),
+    };
+    const preflight = scenes.filter(
+      (scene, index) => selectedScenes.has(index) && !scene.errors.length,
+    );
     if (!preflight.length) return;
     batchBusy = true;
+    $('batchPicture').disabled = true;
     $('batchEnqueue').disabled = $('chooseBatchFolder').disabled = true;
+    $('batchSelectAll').disabled = true;
     $('batchError').textContent = '';
     const loaded = new Map(),
       failures = new Map(),
@@ -217,6 +321,14 @@ export function setupBatch(
         }
       }
       if (revision !== batchRevision || !batchDialog.open) return;
+      try {
+        await fileMaterials(
+          root,
+          [...new Set([...loaded.values()].map((asset) => asset.id))],
+        );
+      } catch {
+        /* 归类失败不影响生成任务。 */
+      }
       for (const scene of preflight) {
         const problems = scene.assets
           .map((slot) => failures.get(slot.file))
@@ -231,10 +343,10 @@ export function setupBatch(
       const staged = ready.map((scene) =>
         makeBatchJob(scene, settings, loaded, batchUploads),
       );
-      enqueue(staged);
+      await enqueue(staged);
       batchDialog.close();
       activateQueueTab($('queueTab-processing'));
-      const skipped = scenes.filter((scene) => scene.errors.length);
+      const skipped = preflight.filter((scene) => scene.errors.length);
       const first = skipped[0];
       const warning = first
         ? '跳过 ' +
@@ -255,6 +367,7 @@ export function setupBatch(
     } finally {
       if (revision === batchRevision) {
         batchBusy = false;
+        $('batchPicture').disabled = false;
         $('chooseBatchFolder').disabled = false;
         $('batchProgress').textContent = '';
         if (batchDialog.open && batchPreview) renderBatchPreview();

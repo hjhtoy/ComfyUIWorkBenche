@@ -1,14 +1,22 @@
-import { $, elem, uid, button } from './dom.js';
+import { hosted, updateWorkspace, writeWorkspace, watchWorkspace } from '../storage/workspace.js';
+import { $, elem, uid } from './dom.js';
+import { setupMaterialPicker } from './material-picker.js';
+import { materialFolders } from '../storage/material-folders.js';
 import { mentionChip, promptFragment } from './mentions.js';
+import { advancedSettings } from './advanced-parameters.js';
+import { fieldKey } from '../comfy/advanced.js';
 import {
   profile,
   legacyFrameform,
   ratios,
   sizeConfig,
+  durationSeconds,
+  durationFieldValue,
   readField,
 } from '../comfy/config.js';
 import { materialLimit, referenceTag, slotsFor } from '../comfy/references.js';
 import { outputURL } from '../comfy/api.js';
+import { parseStoryboard } from '../batch/project.js';
 import {
   materialKind,
   materialKinds,
@@ -28,6 +36,44 @@ import {
   controls,
 } from './parameters.js';
 
+// Reuse old snapshots where these controls were saved only as advanced values.
+export function restoreH3Form(data) {
+  const restored = profile.restoredH3Controls;
+  if (!restored || data.h3ControlsRestored) return data;
+  const advanced = { ...data.advanced };
+  const next = { ...data, advanced, h3ControlsRestored: true };
+  const take = (pair) => {
+    const key = fieldKey(pair);
+    const value = advanced[key];
+    delete advanced[key];
+    return value;
+  };
+  if (restored.prompt) {
+    const value = take(profile.prompt);
+    if (!next.html) {
+      const content = elem('div');
+      content.textContent =
+        typeof value === 'string' ? value : readField(profile.prompt);
+      next.html = content.innerHTML;
+    }
+  }
+  if (restored.duration) {
+    const { field, min, max, increment = 1 } = profile.duration;
+    const value = take(field);
+    if (!Number.isFinite(next.duration)) {
+      const units = (value - min) / increment;
+      next.duration =
+        Number.isFinite(value) &&
+        value >= min &&
+        value <= max &&
+        Math.abs(units - Math.round(units)) < 1e-7
+          ? value
+          : readField(field);
+    }
+  }
+  return next;
+}
+
 export function setupComposer(serverChanged) {
   const editor = $('editor'),
     picker = $('picker'),
@@ -35,12 +81,13 @@ export function setupComposer(serverChanged) {
   const assets = [],
     mentions = new Map();
   let nextMention = 0,
-    savedRange,
     restoring = false,
-    restoreRevision = 0;
+    restoreRevision = 0,
+    storyboardFilename = '';
   const draftKey = 'frameform.draft.v1.' + pageKey;
   const assetCache = new Map();
   const draftStatus = $('draftStatus');
+  const advanced = advancedSettings('openAdvanced', '手动生成', saveDraft);
   async function readServerReference(ref) {
     if (!ref.source) return null;
     const { base, ...item } = ref.source;
@@ -107,20 +154,40 @@ export function setupComposer(serverChanged) {
     });
     return {
       html: copy.innerHTML,
+      ...(storyboardFilename && { storyboardFilename }),
       refs,
       server: $('server').value,
       serverProfileId: $('serverList').value,
       ratio: $('ratio').value,
       mp: sizeConfig ? Number($('size').value) : undefined,
-      duration: profile.duration ? $('duration').valueAsNumber : undefined,
+      duration: profile.duration
+        ? durationSeconds($('duration').valueAsNumber)
+        : undefined,
       steps: profile.steps ? $('steps').valueAsNumber : undefined,
       height: editor.style.height,
+      advanced: advanced.snapshot(),
+      ...(profile.restoredH3Controls && { h3ControlsRestored: true }),
     };
   }
-  function saveDraft() {
+  let draftWrite = 0, draftConflict = false;
+  async function saveDraft() {
     if (restoring) return;
     const draft = composerData();
-    const saved = writeLocal(draftKey, draft);
+    const revision = ++draftWrite;
+    let saved;
+    if (hosted) {
+      draftStatus.textContent = '正在保存到工作区…';
+      try { saved = await writeWorkspace(draftKey, draft); }
+      catch (error) {
+        if (revision === draftWrite) {
+          draftStatus.textContent = error.message;
+          draftConflict = true;
+        }
+        return;
+      }
+      if (revision !== draftWrite) return;
+      draftConflict = false;
+    } else saved = writeLocal(draftKey, draft);
     const available = draft.refs.every((ref) => mentions.get(ref.key)?.stored);
     draftStatus.textContent = !saved
       ? '浏览器存储不可用，刷新可能丢失草稿'
@@ -128,7 +195,8 @@ export function setupComposer(serverChanged) {
         ? '部分素材未保存，刷新后可能要重新选择'
         : '草稿已保存';
   }
-  async function applyComposer(data) {
+  async function applyComposer(saved) {
+    const data = restoreH3Form(saved);
     const revision = ++restoreRevision;
     restoring = true;
     $('promptRegion').inert = true;
@@ -142,9 +210,11 @@ export function setupComposer(serverChanged) {
       if (Object.hasOwn(ratios, data.ratio)) $('ratio').value = data.ratio;
       if (Number.isFinite(data.mp)) updateSizeOptions(data.mp);
       else updateSizeOptions();
-      if (Number.isFinite(data.duration)) $('duration').value = data.duration;
+      if (Number.isFinite(data.duration))
+        $('duration').value = durationFieldValue(data.duration);
       if (Number.isInteger(data.steps)) $('steps').value = data.steps;
       if (typeof data.height === 'string') editor.style.height = data.height;
+      advanced.set(data.advanced);
       controls();
       const refs = data.refs || [];
       const resolved = await Promise.all(refs.map(loadAsset));
@@ -156,6 +226,8 @@ export function setupComposer(serverChanged) {
         else mentions.delete(ref.key);
         nextMention = Math.max(nextMention, ref.key);
       });
+      storyboardFilename =
+        typeof data.storyboardFilename === 'string' ? data.storyboardFilename : '';
       editor.replaceChildren(promptFragment(data.html));
       editorChanged();
       return true;
@@ -193,6 +265,7 @@ export function setupComposer(serverChanged) {
     editor.dataset.empty = String(
       !count && !editor.textContent.replaceAll('\u200b', '').trim(),
     );
+    if (editor.dataset.empty === 'true') storyboardFilename = '';
     $('formError').textContent = '';
     saveDraft();
   }
@@ -240,26 +313,126 @@ export function setupComposer(serverChanged) {
     editorChanged();
   };
   editor.ondrop = (e) => e.preventDefault();
-  $('addRef').onmousedown = (e) => e.preventDefault();
-  $('addRef').onclick = () => openPicker(selectionRange());
-  $('closePicker').onclick = () => picker.close();
-  $('browse').onclick = () => $('file').click();
-  let libraryFilter = 'all';
+  // A single storyboard TXT: resolve its picture names against the library and
+  // write the text with the same @-chips the picker inserts.
+  async function importStoryboard(file) {
+    if (!file) return;
+    const error = $('formError');
+    error.classList.remove('success');
+    error.textContent = '';
+    let text;
+    try {
+      text = await file.text();
+    } catch {
+      error.textContent = '无法读取 ' + file.name + '，请检查文件内容。';
+      return;
+    }
+    await restoreMaterialLibrary();
+    // Older copies of a renamed/redrawn asset are replaced by the newest take.
+    const dropped = await pruneDuplicateMaterials();
+    const materials = assets.map((asset) => ({
+      name: asset.file.name,
+      item: asset,
+    }));
+    const scene = parseStoryboard(file.name, text, materials);
+    if (scene.errors.length) {
+      error.textContent =
+        '无法导入 ' + file.name + '：' + scene.errors.join('；');
+      return;
+    }
+    const slots = new Map(scene.assets.map((slot) => [slot.key, slot]));
+    const keys = new Map();
+    for (const slot of scene.assets)
+      if (!keys.has(slot.file.id)) keys.set(slot.file.id, ++nextMention);
+    for (const slot of scene.assets) mentions.set(keys.get(slot.file.id), slot.file);
+    const content = elem('div');
+    for (const part of scene.fragments) {
+      if (typeof part === 'string') content.append(part);
+      else {
+        const slot = slots.get(part.key);
+        content.append(mentionChip(keys.get(slot.file.id), slot.name, slot.kind));
+      }
+    }
+    // insertHTML keeps the change undoable, unlike replacing the child nodes.
+    editor.focus();
+    const selection = getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.execCommand('insertHTML', false, content.innerHTML + '&#8203;');
+    if (profile.duration && Number.isFinite(scene.duration)) {
+      $('duration').value = durationFieldValue(scene.duration);
+      controls();
+    }
+    storyboardFilename = file.name;
+    editorChanged();
+    const count = scene.assets.length;
+    error.textContent =
+      '已从 ' + file.name + ' 导入提示词' +
+      (count ? '，引用 ' + count + ' 个素材。' : '。') +
+      (dropped.length
+        ? ' 素材库里的 ' +
+          dropped.length +
+          ' 条重名旧条目已移除，保留最近导入的一份。'
+        : '');
+    error.classList.add('success');
+  }
+  $('importTxt').onclick = () => $('txtFile').click();
+  $('txtFile').onchange = async () => {
+    const file = $('txtFile').files?.[0];
+    $('txtFile').value = '';
+    try {
+      await importStoryboard(file);
+    } catch (failure) {
+      $('formError').textContent = '导入失败：' + failure.message;
+    }
+  };
+  const openPicker = setupMaterialPicker({
+    assets,
+    restoreMaterialLibrary,
+    importMaterial,
+    materialPreview,
+    insertMention,
+  });
   const libraryKey = 'frameform.material-library.v1.' + pageKey;
-  const materialTabs = [...$('materialTabs').querySelectorAll('[role="tab"]')];
   function assetRecord(asset) {
     return { id: asset.id, kind: asset.kind, name: asset.file.name };
   }
   function rememberMaterial(asset) {
     if (!asset.stored) return;
+    if (hosted) return updateWorkspace(libraryKey, [], entries => [
+      ...entries.filter(ref => ref.id !== asset.id), assetRecord(asset),
+    ]);
     const entries = readLocal(libraryKey, []).filter(
       (ref) => ref.id !== asset.id,
     );
     entries.push(assetRecord(asset));
     writeLocal(libraryKey, entries);
   }
+  // Clean up copies left by earlier versions: keep the newest, unlist the rest.
+  async function pruneDuplicateMaterials() {
+    const seen = new Set(),
+      dropped = [];
+    for (let i = assets.length - 1; i >= 0; i--) {
+      const name = assets[i].file.name.normalize('NFC');
+      if (seen.has(name)) dropped.push(assets[i]);
+      else seen.add(name);
+    }
+    if (!dropped.length) return dropped;
+    for (const asset of dropped) {
+      const index = assets.indexOf(asset);
+      if (index >= 0) assets.splice(index, 1);
+    }
+    const ids = new Set(dropped.map((asset) => asset.id));
+    const keep = (ref) => !ids.has(ref.id);
+    if (hosted) await updateWorkspace(libraryKey, [], (entries) => entries.filter(keep));
+    else writeLocal(libraryKey, readLocal(libraryKey, []).filter(keep));
+    return dropped;
+  }
   let libraryReady;
   function restoreMaterialLibrary() {
+    if (hosted) return updateWorkspace(libraryKey, []).then(entries => Promise.all(entries.map(loadAsset)));
     libraryReady ??= Promise.all(readLocal(libraryKey, []).map(loadAsset));
     return libraryReady;
   }
@@ -282,76 +455,6 @@ export function setupComposer(serverChanged) {
       if (controls) media.setAttribute('aria-label', asset.file.name);
     }
     return media;
-  }
-  function renderMaterialLibrary() {
-    for (const tab of materialTabs) {
-      const key = tab.dataset.kind;
-      const count =
-        key === 'all'
-          ? assets.length
-          : assets.filter((a) => a.kind === key).length;
-      tab.querySelector('.queue-tab-count').textContent = count;
-      tab.setAttribute('aria-description', count + ' 个素材');
-      const active = key === libraryFilter;
-      tab.setAttribute('aria-selected', String(active));
-      tab.tabIndex = active ? 0 : -1;
-      if (active) $('materialPanel').setAttribute('aria-labelledby', tab.id);
-    }
-    const visible = assets.filter(
-      (asset) => libraryFilter === 'all' || asset.kind === libraryFilter,
-    );
-    $('emptyLibrary').hidden = visible.length > 0;
-    $('library').replaceChildren(
-      ...visible.map((asset) => {
-        const card = button('', () => insertMention(asset));
-        card.className = 'thumb material-thumb';
-        card.title = asset.file.name;
-        card.setAttribute('aria-label', asset.file.name);
-        const preview = elem('div', 'material-thumb-media');
-        preview.setAttribute('aria-hidden', 'true');
-        const media = materialPreview(asset);
-        if (media.tagName === 'VIDEO' || media.tagName === 'IMG')
-          media.onerror = () =>
-            preview.replaceChildren(
-              elem('span', 'media-tile-icon', materialSpecs[asset.kind].label),
-            );
-        preview.append(media);
-        card.append(preview, elem('span', 'material-name', asset.file.name));
-        return card;
-      }),
-    );
-  }
-  for (const [index, tab] of materialTabs.entries()) {
-    const choose = () => {
-      libraryFilter = tab.dataset.kind;
-      $('pickError').textContent = '';
-      renderMaterialLibrary();
-    };
-    tab.onclick = choose;
-    tab.onkeydown = (event) => {
-      const nav = {
-        ArrowLeft: (index + materialTabs.length - 1) % materialTabs.length,
-        ArrowRight: (index + 1) % materialTabs.length,
-        Home: 0,
-        End: materialTabs.length - 1,
-      };
-      if (!Object.hasOwn(nav, event.key)) return;
-      event.preventDefault();
-      const next = materialTabs[nav[event.key]];
-      next.focus();
-      next.click();
-    };
-  }
-  function openPicker(range) {
-    savedRange = range;
-    $('pickError').textContent = '';
-    $('file').value = '';
-    libraryFilter = 'all';
-    renderMaterialLibrary();
-    picker.showModal();
-    restoreMaterialLibrary().then(() => {
-      if (picker.open) renderMaterialLibrary();
-    });
   }
   async function matchingAsset(file, kind) {
     const candidates = assets.filter(
@@ -382,7 +485,7 @@ export function setupComposer(serverChanged) {
       throw Error('无法导入 ' + file.name + '，请检查文件格式和内容。');
     const existing = await matchingAsset(file, kind);
     if (existing) {
-      rememberMaterial(existing);
+      await rememberMaterial(existing);
       return existing;
     }
     const copy = new File([file], file.name, {
@@ -409,41 +512,37 @@ export function setupComposer(serverChanged) {
     try {
       await fileData(mediaKeyForRef(asset), copy);
       asset.stored = true;
-    } catch {}
+    } catch (error) {
+      if (hosted) { URL.revokeObjectURL(asset.url); throw error; }
+    }
     assetCache.set(asset.id, asset);
     assets.push(asset);
-    rememberMaterial(asset);
+    await rememberMaterial(asset);
     return asset;
   }
-  $('file').onchange = async () => {
-    const files = [...$('file').files];
-    if (!files.length) return;
-    const range = savedRange;
-    const stillPicking = () => picker.open && savedRange === range;
-    $('browse').disabled = true;
-    const imported = [],
-      errors = [];
-    try {
-      await restoreMaterialLibrary();
-      for (const file of files) {
-        try {
-          imported.push(await importMaterial(file));
-        } catch (e) {
-          errors.push(e.message);
-        }
-        if (!stillPicking()) break;
+  // Batch imports keep their project folder so the library mirrors the source tree.
+  const reservedFolderNames = new Set(['全部素材', '未分类']);
+  async function fileMaterials(folderName, assetIds) {
+    let name = String(folderName || '').trim().slice(0, 80);
+    if (!name || !assetIds.length) return;
+    if (reservedFolderNames.has(name)) name += '（项目）';
+    await materialFolders((state) => {
+      let folder = state.folders.find((item) => item.name === name);
+      if (!folder) {
+        folder = { id: uid(), name };
+        state.folders.push(folder);
       }
-      if (!stillPicking()) return;
-      renderMaterialLibrary();
-      $('pickError').textContent = errors.join('\n');
-      if (files.length === 1 && imported.length)
-        insertMention(imported[0], files[0].name);
-    } finally {
-      $('browse').disabled = false;
-      $('file').value = '';
+      for (const id of assetIds) state.byAsset[id] = folder.id;
+    });
+  }
+  function insertMention(asset, range) {
+    if (
+      !editor.contains(range.commonAncestorContainer) ||
+      !/^[@＠]$/.test(range.toString())
+    ) {
+      $('pickError').textContent = '引用位置已更改，请重新输入 @ 选择素材。';
+      return;
     }
-  };
-  function insertMention(asset, displayName = asset.file.name) {
     const kind = asset.kind,
       limit = materialLimit(kind);
     if (!limit) {
@@ -469,12 +568,12 @@ export function setupComposer(serverChanged) {
       key = ++nextMention;
       mentions.set(key, asset);
     }
-    const chip = mentionChip(key, displayName, kind);
+    const chip = mentionChip(key, asset.file.name, kind);
     picker.close();
     editor.focus();
     const selection = getSelection();
     selection.removeAllRanges();
-    selection.addRange(savedRange);
+    selection.addRange(range);
     document.execCommand('insertHTML', false, chip.outerHTML + '&#8203;');
     editorChanged();
     return true;
@@ -549,6 +648,8 @@ export function setupComposer(serverChanged) {
     copy.contentEditable = 'false';
     copy.style.cssText =
       'position:fixed;left:-200vw;top:0;white-space:pre-wrap;';
+    // Keep a version without material chips: titles should describe the task.
+    const titleCopy = copy.cloneNode(true);
     for (const chip of copy.querySelectorAll('.mention'))
       chip.replaceWith(tags.get(+chip.dataset.key) || '');
     document.body.append(copy);
@@ -556,9 +657,14 @@ export function setupComposer(serverChanged) {
     copy.remove();
     if (profile.prompt && !prompt)
       throw Error('请填写提示词，再加入生成队列。');
-    const title =
-      editor.innerText.replaceAll('\u200b', '').trim().slice(0, 80) ||
-      profile.title;
+    for (const chip of titleCopy.querySelectorAll('.mention')) chip.remove();
+    document.body.append(titleCopy);
+    const titleText = titleCopy.innerText
+      .replaceAll('\u200b', '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    titleCopy.remove();
+    const title = storyboardFilename || titleText.slice(0, 80) || profile.title;
     return {
       ...generationSettings(),
       prompt,
@@ -572,13 +678,15 @@ export function setupComposer(serverChanged) {
   $('refTools').hidden = $('refHint').hidden = !hasMaterialSlots;
   if (!profile.prompt) {
     $('promptLabel').textContent = '素材';
-    editor.dataset.placeholder = '点击下方添加素材，或输入 @';
+    editor.dataset.placeholder = '输入 @ 引用素材';
     if (!hasMaterialSlots) {
       $('promptRegion').hidden = true;
       $('promptRegion').parentElement.classList.add('no-prompt-region');
     }
   }
 
+  watchWorkspace(draftKey, saved => applyComposer(saved), () =>
+    !draftConflict && !restoring && !$('composer').contains(document.activeElement));
   function restoreDraft() {
     $('ratio').onchange = () => {
       updateSizeOptions();
@@ -605,13 +713,15 @@ export function setupComposer(serverChanged) {
       applyComposer(savedDraft).catch(() => {
         draftStatus.textContent = '草稿恢复失败，请检查浏览器存储。';
       });
-    else if (
-      !legacyFrameform &&
-      !hasMaterialSlots &&
-      readField(profile.prompt)
-    ) {
-      editor.textContent = readField(profile.prompt);
-      editorChanged();
+    else if (!legacyFrameform && readField(profile.prompt)) {
+      // A default that references material slots cannot be prefilled safely, but
+      // plain instructions (such as edit prompts) are useful starting text.
+      const fallback = readField(profile.prompt);
+      const tags = /<(?:Picture|Video|Audio)\s*\d+>/i.test(fallback);
+      if (!hasMaterialSlots || !tags) {
+        editor.textContent = fallback;
+        editorChanged();
+      }
     }
 
     if (!savedDraft) editorChanged();
@@ -630,5 +740,6 @@ export function setupComposer(serverChanged) {
     materialPreview,
     restoreMaterialLibrary,
     importMaterial,
+    fileMaterials,
   };
 }

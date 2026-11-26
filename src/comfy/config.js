@@ -9,6 +9,7 @@ const readField = (pair, graph = template) =>
 const writeField = (graph, [id, key], value) => {
   graph[id].inputs[key] = value;
 };
+const workbenchId = document.documentElement.dataset.workbenchId;
 const legacyFrameform = profile.legacyFrameform === true;
 const sizeConfig = profile.size;
 const defaultDuration = readField(profile.duration?.field);
@@ -27,6 +28,17 @@ const directSizes =
       )
     : [];
 const fps = profile.fps;
+const durationInFrames = profile.duration?.unit === 'frames';
+// Forms, job history and batch TXT use seconds. A direct H3 length uses frames.
+function durationSeconds(value) {
+  return durationInFrames && Number.isFinite(value) ? value / fps : value;
+}
+function durationFieldValue(seconds) {
+  if (!durationInFrames || !Number.isFinite(seconds)) return seconds;
+  const { min, increment = 1 } = profile.duration;
+  const frames = Math.max(min, Math.round(seconds * fps));
+  return min + Math.ceil((frames - min) / increment) * increment;
+}
 function pixelDimensions(ratio, mp, multiple = sizeConfig.multiple) {
   const [x, y] = ratio.split(':').map(Number);
   const scale = 1024 * Math.sqrt(mp / (x * y));
@@ -46,12 +58,16 @@ export {
   template,
   profile,
   legacyFrameform,
+  workbenchId,
   slots,
   ratios,
   readField,
   writeField,
   sizeConfig,
   defaultDuration,
+  durationInFrames,
+  durationSeconds,
+  durationFieldValue,
   defaultRatio,
   directSizes,
   fps,

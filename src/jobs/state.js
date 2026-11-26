@@ -37,7 +37,7 @@ function jobParams(j) {
   return [
     j.form?.ratio,
     j.dimensions,
-    j.duration != null ? j.duration + ' 秒' : null,
+    j.duration != null ? Math.round(j.duration * 100) / 100 + ' 秒' : null,
     j.steps != null ? j.steps + ' 步' : null,
   ]
     .filter(Boolean)

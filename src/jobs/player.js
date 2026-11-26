@@ -1,44 +1,42 @@
+import { hosted } from '../storage/workspace.js';
 import { $, elem } from '../ui/dom.js';
 import { promptFragment } from '../ui/mentions.js';
+import { showJobAdvanced } from '../ui/advanced-parameters.js';
+import { restoreH3Form } from '../ui/composer.js';
 import { materialSpecs, refKind } from '../media/types.js';
-import { outputURL } from '../comfy/api.js';
-import { states, terminal, hasJobForm, jobParams } from './state.js';
+import { states, terminal, jobParams } from './state.js';
 import { ensureJobForm } from './history.js';
 import {
   stillOf,
+  resultURL,
   cachedOutput,
   downloadOutput,
   downloadable,
 } from '../media/outputs.js';
 
 export function setupPlayer(
-  { applyComposer, loadAsset, materialPreview, draftStatus },
+  { applyComposer, loadAsset, materialPreview },
   render,
 ) {
   let selectedJob,
     playingJob,
     playerRevision = 0;
   const player = $('player');
+  const pending = elem('div', 'player-no-output');
+  const pendingHeading = elem('h3');
+  const pendingNote = elem('p');
+  pending.append(pendingHeading, pendingNote);
   let playerURLs = [];
   function clearPlayer() {
     $('playerStage').replaceChildren();
     for (const url of playerURLs) URL.revokeObjectURL(url);
     playerURLs = [];
   }
-  async function selectJob(j, preview = true) {
+  function selectJob(j, preview = terminal(j)) {
     selectedJob?.row?.classList.remove('selected');
     selectedJob = j;
     j.row.classList.add('selected');
-    const openEarly = preview && terminal(j) && !hasJobForm(j);
-    if (openEarly) showResult(j);
-    const ready = await ensureJobForm(j, render);
-    if (selectedJob !== j || j.removed) return;
-    if (ready) {
-      if (!(await applyComposer(j.form)) || selectedJob !== j) return;
-    } else if (!openEarly) {
-      draftStatus.textContent = '这条任务缺少可恢复的提示词和参数。';
-    }
-    if (preview && terminal(j) && !openEarly) showResult(j);
+    if (preview) showResult(j);
   }
   async function renderPlayerDetails(j, revision) {
     const prompt = $('playerPrompt');
@@ -46,17 +44,25 @@ export function setupPlayer(
     $('reuse').disabled = true;
     $('playerRefs').replaceChildren();
     $('refsLabel').hidden = true;
+    showJobAdvanced();
     const ready = await ensureJobForm(j, render);
     if (revision !== playerRevision || !player.open) return;
     if (!ready) {
-      prompt.textContent =
-        j.detailsError || '本地记录和 ComfyUI 历史中均没有可恢复的提示词。';
+      prompt.textContent = j.detailsError || (terminal(j)
+        ? '本地记录和 ComfyUI 历史中均没有可恢复的提示词。'
+        : '暂时没有可显示的提示词。');
       return;
     }
-    $('playerParams').textContent = jobParams(j);
-    prompt.replaceChildren(promptFragment(j.form.html));
+    const form = restoreH3Form(j.form);
+    $('playerParams').textContent = jobParams({
+      ...j,
+      form,
+      duration: j.duration ?? form.duration,
+    });
+    prompt.replaceChildren(promptFragment(form.html));
+    showJobAdvanced(form.advanced);
     $('reuse').disabled = false;
-    const refs = j.form.refs;
+    const refs = form.refs;
     $('refsLabel').hidden = !refs.length;
     const loaded = await Promise.all(refs.map(loadAsset));
     if (revision !== playerRevision || !player.open) return;
@@ -73,8 +79,17 @@ export function setupPlayer(
       $('playerRefs').append(figure);
     });
   }
+  function updatePendingStatus(j) {
+    pendingHeading.textContent = states[j.state];
+    pendingNote.textContent = [j.note, j.warn].filter(Boolean).join('\n');
+  }
+  function updatePlayer(j) {
+    if (playingJob !== j || !player.open || !pending.isConnected) return;
+    if (terminal(j)) showResult(j);
+    else updatePendingStatus(j);
+  }
   async function showResult(j) {
-    if (!terminal(j) || j.removed) return;
+    if (j.removed) return;
     const item = downloadable(j);
     const revision = ++playerRevision;
     playingJob = j;
@@ -87,6 +102,9 @@ export function setupPlayer(
       const loading = elem('div', 'spinner');
       loading.setAttribute('aria-label', '正在读取视频');
       $('playerStage').append(loading);
+    } else if (!terminal(j)) {
+      updatePendingStatus(j);
+      $('playerStage').append(pending);
     } else {
       const status = elem('div', 'player-no-output');
       const icon = elem(
@@ -103,13 +121,13 @@ export function setupPlayer(
     renderPlayerDetails(j, revision);
     if (!item) return;
     const still = stillOf(j);
-    const [blob, poster] = await Promise.all([
+    const [blob, poster] = hosted ? [] : await Promise.all([
       cachedOutput(j, item),
       still && item.kind === 'video' ? cachedOutput(j, still) : null,
     ]);
     if (revision !== playerRevision || !player.open) return;
     const cachedURL = (x, data) => {
-      if (!data) return outputURL(j, x);
+      if (!data) return resultURL(j, x);
       const url = URL.createObjectURL(data);
       playerURLs.push(url);
       return url;
@@ -162,7 +180,8 @@ export function setupPlayer(
     const j = playingJob;
     if (!j?.form) return;
     player.close();
-    await selectJob(j, false);
+    selectJob(j, false);
+    if (!(await applyComposer(j.form))) return;
     $('composer').querySelector('h2').setAttribute('tabindex', '-1');
     $('composer').querySelector('h2').focus();
     window.scrollTo({ top: $('composer').offsetTop - 14, behavior: 'smooth' });
@@ -194,5 +213,7 @@ export function setupPlayer(
     if (selectedJob === job) selectedJob = null;
   }
 
-  return { player, selectJob, showResult, dropSelectionForServer, releaseJob };
+  return {
+    player, selectJob, showResult, updatePlayer, dropSelectionForServer, releaseJob,
+  };
 }

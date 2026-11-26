@@ -1,0 +1,74 @@
+<nav id="workflowBar" aria-label="Frameform 工作流库">
+  <div class="wrap workflow-toolbar">
+    <a class="workflow-brand" href="#workflowBar" aria-label="Frameform"><span class="brandmark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24"><path d="M2 3h20l-3 5H8l-6 10zm5 17 6-10h5l-6 10z"/></svg></span><span>Frameform</span></a>
+    <div class="workflow-switcher">
+      <label for="workflowSelect">工作流</label>
+      <select id="workflowSelect" aria-label="工作流">
+        <option value="pika-h3">Pika H3 Flex</option>
+      </select>
+      <button type="button" id="workflowRemove" class="button danger" aria-label="删除所选工作流" title="内置工作流不可删除" disabled>删除</button>
+      <button type="button" id="workflowImport" class="button workflow-import"><span aria-hidden="true">＋</span> 导入工作流</button>
+    </div>
+  </div>
+  <p id="workflowNotice" class="wrap notice" role="status" hidden></p>
+</nav>
+<div id="workflowViews" hidden></div>
+<dialog id="workflowDialog" aria-labelledby="workflowDialogTitle">
+  <div class="card-head">
+    <div class="section-title"><h2 id="workflowDialogTitle">导入工作流</h2></div>
+    <button type="button" id="workflowClose" class="button danger" aria-label="关闭工作流导入">✕</button>
+  </div>
+  <form id="workflowForm">
+    <div class="workflow-dialog-content">
+      <label class="workflow-file">
+        <span class="workflow-field-label">ComfyUI API JSON</span>
+        <input id="workflowFile" type="file" accept=".json,application/json" required>
+      </label>
+      <p class="note" id="workflowImportStatus" role="status"></p>
+      <div id="workflowMapping" hidden>
+        <label class="workflow-field"><span>工作流名称</span><input id="workflowName" maxlength="100" required></label>
+        <div class="workflow-review">
+          <h3>控件映射</h3>
+          <button type="button" id="workflowCheckNodes" class="button">检查服务器节点</button>
+        </div>
+        <p class="note" id="workflowNodeStatus" role="status"></p>
+        <div class="workflow-mapping-fields" id="workflowMappingFields">
+          <label class="workflow-field"><span>输出节点</span><select id="workflowOutput" required></select></label>
+          <label class="workflow-field"><span>提示词</span><select id="workflowPrompt"></select></label>
+          <label class="workflow-field"><span>输出尺寸</span><select id="workflowSize"></select></label>
+          <label class="workflow-field"><span>采样步数</span><select id="workflowSteps"></select></label>
+          <label class="workflow-field"><span>视频时长</span><select id="workflowDuration"></select></label>
+          <label class="workflow-field"><span>RunningHub 工作流 ID</span><input id="workflowRunningHub" inputmode="numeric" autocomplete="off" placeholder="可选，平台工作流地址中的数字 ID"></label>
+        </div>
+        <details id="workflowReferences" hidden>
+          <summary>素材输入 <span id="workflowRefCount" class="note"></span></summary>
+          <div id="workflowReferenceList"></div>
+        </details>
+        <details id="workflowAdvanced">
+          <summary>节点参数 <span id="workflowAdvancedCount" class="note"></span></summary>
+          <p class="note">勾选要放入「高级参数」的字段。连接输入显示上游节点。</p>
+          <label class="workflow-node-filter"><span class="sr">搜索节点参数</span><input id="workflowNodeFilter" type="search" placeholder="搜索节点、编号或参数"></label>
+          <div id="workflowNodeFields"></div>
+        </details>
+      </div>
+      <p id="workflowError" class="notice danger" role="alert"></p>
+    </div>
+    <div class="workflow-dialog-actions">
+      <button type="button" id="workflowCancel" class="button danger">取消</button>
+      <button type="submit" class="button workflow-import" id="workflowCreate" disabled>生成工作台</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="removeWorkflowDialog" aria-labelledby="removeWorkflowTitle" aria-describedby="removeWorkflowMessage">
+  <div class="card-head"><div class="section-title"><h2 id="removeWorkflowTitle" class="danger">删除工作流</h2></div></div>
+  <div class="workflow-dialog-content">
+    <p id="removeWorkflowMessage" class="danger"></p>
+    <p class="note">将工作流从列表移除，已提交的任务会继续运行。重新导入同样的工作流和映射可恢复浏览器中保留的草稿和任务记录。</p>
+    <p id="removeWorkflowError" class="notice danger" role="alert"></p>
+  </div>
+  <div class="workflow-dialog-actions">
+    <button type="button" id="cancelRemoveWorkflow" class="button danger" autofocus>取消</button>
+    <button type="button" id="confirmRemoveWorkflow" class="button danger">确认删除</button>
+  </div>
+</dialog>

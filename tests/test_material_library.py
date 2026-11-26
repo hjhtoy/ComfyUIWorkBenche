@@ -102,27 +102,78 @@ async def verify(path):
             ("第二段.webm", "video/webm", video + b"x"),
             ("第二个.wav", "audio/wav", audio(2)),
         ]
-        await page.get_by_role("button", name="添加素材").click()
-        await page.get_by_role("dialog", name="选择素材").wait_for()
-        await page.locator("#file").set_input_files(
-            [{"name": n, "mimeType": m, "buffer": body} for n, m, body in payloads]
-        )
-        await page.locator(".material-thumb").nth(4).wait_for()
+        editor = page.locator("#editor")
+        picker = page.locator("#picker")
+        manage = page.get_by_role("button", name="添加素材")
+        folders = picker.get_by_role("group", name="按目录筛选")
+
+        async def import_files(entries):
+            await picker.locator("#file").set_input_files(
+                [{"name": n, "mimeType": m, "buffer": body} for n, m, body in entries]
+            )
+            await page.wait_for_function("!document.querySelector('#file').files.length")
+
+        async def directory(name):
+            await folders.get_by_role("button", name=name, exact=True).click()
+
+        async def create_directory(name):
+            await picker.get_by_role("button", name="新建目录").click()
+            await picker.get_by_role("textbox", name="目录名称").fill(name)
+            await picker.get_by_role("button", name="创建", exact=True).click()
+            await folders.get_by_role("button", name=name, pressed=True).wait_for()
+
+        await editor.fill("原草稿")
+        await manage.click()
+        await page.get_by_role("dialog", name="管理素材").wait_for()
+        await import_files(payloads[:1])
+        await picker.get_by_role("button", name="花园.png").click()
+        await picker.locator("#closePicker").click()
+        assert await editor.inner_text() == "原草稿"
+        assert await editor.locator(".mention").count() == 0
+        await manage.click()
+        await import_files([payloads[1], *payloads[3:]])
 
         async def counts():
             return await page.locator(
                 "#materialTabs .queue-tab-count"
             ).all_text_contents()
 
-        assert await counts() == ["5", "1", "2", "2"]
-        picker = page.locator("#picker")
+        assert await counts() == ["4", "1", "2", "1"]
         tabs = picker.get_by_role("tablist", name="素材类型")
-        editor = page.locator("#editor")
+        await create_directory("场景")
+        await create_directory("声音")
+        await directory("未分类")
+        assert await counts() == ["4", "1", "2", "1"]
+        await picker.get_by_role("button", name="花园.png").click()
+        await picker.get_by_role("button", name="短片.webm").click()
+        await picker.get_by_label("目标目录").select_option(label="场景")
+        await picker.get_by_role("button", name="移动", exact=True).click()
+        await picker.get_by_text("已将 2 项移至「场景」。").wait_for()
+        assert await counts() == ["2", "0", "1", "1"]
+        await directory("声音")
+        await import_files([payloads[2]])
+        assert await counts() == ["1", "0", "0", "1"]
         await picker.locator("#closePicker").click()
+        assert await editor.inner_text() == "原草稿"
+
+        # A full-width trigger in the middle of the text keeps its insertion point.
+        await editor.focus()
+        await editor.evaluate("(el) => getSelection().collapse(el.firstChild, 1)")
+        await page.keyboard.insert_text("＠")
+        await page.get_by_role("dialog", name="选择素材").wait_for()
+        assert await picker.get_by_role("button", name="新建目录").is_hidden()
+        await directory("场景")
+        await tabs.get_by_role("tab", name="图片", exact=True).click()
+        assert await picker.locator(".material-thumb").count() == 1
+        await import_files([payloads[0]])
+        assert await editor.locator(".mention").count() == 0
+        await picker.get_by_role("button", name="花园.png").click()
+        assert await page.evaluate("snapshot().prompt") == "原<Picture 1>草稿"
         await editor.fill("混合：")
 
         async def choose(kind, name):
             await page.keyboard.insert_text("@")
+            await directory("全部素材")
             await tabs.get_by_role("tab", name=kind, exact=True).click()
             await picker.get_by_role("button", name=name, exact=True).click()
             await picker.wait_for(state="hidden")
@@ -153,6 +204,16 @@ async def verify(path):
         await page.wait_for_function(
             "Array.from(document.querySelectorAll('#materialTabs .queue-tab-count')).map(e=>e.textContent).join(',')==='5,1,2,2'"
         )
+        await page.set_viewport_size({"width": 375, "height": 780})
+        await directory("场景")
+        assert await counts() == ["2", "1", "1", "0"]
+        assert await picker.evaluate("(el) => el.scrollWidth <= el.clientWidth")
+        await directory("声音")
+        assert await counts() == ["1", "0", "0", "1"]
+        await directory("未分类")
+        assert await counts() == ["2", "0", "1", "1"]
+        await directory("全部素材")
+        await page.set_viewport_size({"width": 1440, "height": 930})
         await tabs.get_by_role("tab", name="音频", exact=True).press("Home")
         assert (
             await tabs.get_by_role("tab", name="全部").get_attribute("aria-selected")
@@ -220,7 +281,7 @@ async def verify(path):
         await b.close()
     await runner.cleanup()
     print(
-        f"PASS {path.name}: mixed import and counts, independent tags, exact repeat uploads, persisted library/draft, actual POST mappings, result media previews"
+        f"PASS {path.name}: explicit @ insertion, persistent virtual folders, folder/type filters, exact repeat uploads, persisted library/draft, actual POST mappings, result media previews"
     )
 
 

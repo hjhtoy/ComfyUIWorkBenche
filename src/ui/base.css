@@ -124,11 +124,23 @@ output {
   font-weight: 650;
   border-color: var(--warm);
 }
+.nav-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+.nav .links,
+#openSettings {
+  flex: none;
+}
 .connect-state {
-  margin-left: auto;
   gap: 8px;
   color: var(--muted);
   font-size: 12px;
+  flex: none;
+  white-space: nowrap;
 }
 .dot {
   width: 7px;
@@ -144,29 +156,9 @@ output {
 .bad .dot {
   background: #cd4f38;
 }
-.hero {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  margin: 31px 0 22px;
-  gap: 12px;
-}
-.over,
 .micro {
   font: 600 10px/1.4 var(--mono);
   letter-spacing: 1.4px;
-}
-.over {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--muted);
-}
-.over:before {
-  content: '';
-  width: 18px;
-  height: 3px;
-  background: var(--warm);
 }
 h1,
 h2,
@@ -174,24 +166,24 @@ h3,
 p {
   margin: 0;
 }
-h1 {
-  font-size: clamp(28px, 3vw, 42px);
-  line-height: 1.25;
-  letter-spacing: -1.8px;
-  margin-top: 7px;
-  font-weight: 750;
-}
 .model {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 6px;
+  min-width: 0;
+  max-width: 320px;
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 600;
   border: 1px solid var(--line);
   border-radius: 5px;
-  padding: 7px 11px;
+  padding: 4px 8px;
   background: var(--surface-muted);
+}
+.workflow-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .model .ico {
   color: var(--warm);
@@ -205,6 +197,9 @@ h1 {
   stroke-linecap: round;
   stroke-linejoin: round;
   flex: none;
+}
+main.wrap {
+  padding-block-start: 16px;
 }
 .server,
 .card {
@@ -356,6 +351,13 @@ label,
   border: 1px solid var(--tag-border);
   background: var(--tint);
 }
+.prompt-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
 .count {
   font: 11px var(--mono);
   color: var(--muted);
@@ -477,6 +479,12 @@ label,
 }
 .notice:not(:empty) {
   margin-top: 9px;
+}
+.notice.success {
+  color: var(--ink);
+  background: var(--success-bg);
+  border-radius: 5px;
+  padding: 7px 9px;
 }
 .server .notice:not(:empty) {
   flex-basis: 100%;
@@ -696,9 +704,6 @@ dialog::backdrop {
   .micro {
     letter-spacing: 0.7px;
   }
-  .hero {
-    margin: 21px 0 17px;
-  }
 }
 @media (max-width: 720px) {
   .nav .wrap {
@@ -711,9 +716,6 @@ dialog::backdrop {
   .links {
     gap: 13px;
   }
-  .hero {
-    align-items: center;
-  }
   .server {
     gap: 8px;
     padding: 11px;
@@ -722,12 +724,17 @@ dialog::backdrop {
     flex-basis: 100%;
     font-size: 12px;
   }
-  .model {
-    font-size: 10px;
-    padding: 5px 7px;
+  .nav-status {
+    gap: 8px;
   }
-  .hero h1 {
-    font-size: 29px;
+  .model {
+    gap: 4px;
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+  .model .ico {
+    width: 14px;
+    height: 14px;
   }
   .card-head {
     padding: 14px 16px;
@@ -741,9 +748,6 @@ dialog::backdrop {
   .connect-state {
     font-size: 11px;
   }
-  .over {
-    font-size: 9px;
-  }
   .body {
     padding: 16px;
   }
@@ -754,9 +758,6 @@ dialog::backdrop {
   }
   .links {
     gap: 9px;
-  }
-  .model {
-    display: none;
   }
   .wrap {
     width: calc(100% - 22px);
@@ -827,9 +828,6 @@ dialog::backdrop {
 }
 .nav .wrap {
   gap: 22px;
-}
-.nav .connect-state {
-  margin-left: auto;
 }
 .server select,
 .size-field select,
@@ -952,6 +950,11 @@ dialog::backdrop {
 }
 .job-details .job-clock {
   font: 11px var(--mono);
+}
+.job-details .job-stage {
+  font: 11px var(--mono);
+  color: var(--tag-ink);
+  font-variant-numeric: tabular-nums;
 }
 .job-name-button {
   min-width: 0;
@@ -1139,7 +1142,13 @@ dialog::backdrop {
     flex-basis: 100%;
   }
   .nav .wrap {
-    gap: 12px;
+    gap: 9px;
+  }
+  .nav .brand-name {
+    display: none;
+  }
+  main.wrap {
+    padding-block-start: 12px;
   }
   .nav .button {
     padding: 5px;
@@ -1195,6 +1204,17 @@ dialog::backdrop {
 }
 .queue-select input {
   margin: 0;
+}
+.queue-sort select {
+  border: 1px solid var(--border-control);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.queue-sort select:hover {
+  border-color: var(--border-hover);
 }
 .queue-notice {
   padding: 8px 20px;
@@ -1295,4 +1315,48 @@ button.danger:focus-visible {
 .composer-grid.no-prompt-region .params {
   border: 0;
   padding: 0;
+}
+.standalone-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warm);
+  border-radius: 10px;
+  padding: 12px 17px;
+  margin-bottom: 16px;
+}
+.standalone-notice[hidden] {
+  display: none;
+}
+.standalone-text {
+  max-width: 640px;
+}
+.standalone-text p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.standalone-text code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.standalone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.standalone-actions input {
+  width: 210px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 11px;
+  color: var(--ink);
+  font: 13px var(--mono);
+  height: 36px;
 }

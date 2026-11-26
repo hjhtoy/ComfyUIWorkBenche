@@ -33,7 +33,10 @@ with tempfile.TemporaryDirectory() as temp:
     profile = ROOT / "workflows/pika-h3.profile.json"
     result = build(builder, "build", workflow, profile, legacy)
     assert result.returncode == 0, result.stderr
-    assert legacy.read_bytes() == (ROOT / "dist/Frameform.html").read_bytes()
+    assert (
+        legacy.read_bytes()
+        == (ROOT / "dist/tests/standalone/Frameform.html").read_bytes()
+    )
 
     for name in ("image", "video", "resize"):
         api = fixtures / f"{name}.api.json"
@@ -61,6 +64,28 @@ with tempfile.TemporaryDirectory() as temp:
         root / "invalid.html",
     )
     assert result.returncode == 1 and not (root / "invalid.html").exists()
+
+    mapped = json.loads((fixtures / "image.profile.json").read_text())
+    mapped["advanced"] = [
+        {"field": ["3", "cfg"], "kind": "number", "min": 1, "max": 20, "step": 0.1}
+    ]
+    selected = root / "advanced.json"
+    selected.write_text(json.dumps(mapped))
+    result = build(
+        builder, "build", fixtures / "image.api.json", selected, root / "advanced.html"
+    )
+    assert result.returncode == 0, result.stderr
+
+    mapped["advanced"][0]["field"] = ["3", "positive"]
+    selected.write_text(json.dumps(mapped))
+    result = build(
+        builder,
+        "build",
+        fixtures / "image.api.json",
+        selected,
+        root / "unsupported.html",
+    )
+    assert result.returncode != 0 and "advanced field" in result.stderr
 
 print(
     "PASS: packaged skill builds the workbench and image/video/resize fixtures offline."

@@ -1,6 +1,7 @@
+import { hosted, workspaceRequest } from '../storage/workspace.js';
 import { $, elem, button } from '../ui/dom.js';
 import { currentQueueBase } from '../ui/servers.js';
-import { writeLocal } from '../storage/browser.js';
+import { writeLocal, readLocal } from '../storage/browser.js';
 import {
   jobs,
   states,
@@ -30,11 +31,75 @@ export function serverJobs(base = currentQueueBase()) {
 
 export function setupQueueView({
   selectJob,
-  showResult,
+  updatePlayer,
   dropSelectionForServer,
   releaseJob,
   requestCancel,
 }) {
+  // Sorting is a view preference: the job number keeps its original order.
+  const sortKey = 'frameform.queue-sort.v1';
+  const sortOptions = new Set([
+    'default',
+    'name:asc',
+    'name:desc',
+    'duration:asc',
+    'duration:desc',
+    'elapsed:asc',
+    'elapsed:desc',
+  ]);
+  let queueSort = readLocal(sortKey, 'default');
+  if (!sortOptions.has(queueSort)) queueSort = 'default';
+  $('queueSort').value = queueSort;
+
+  function sortValue(j, field) {
+    if (field === 'name') return j.title || '';
+    if (field === 'duration')
+      return typeof j.duration === 'number' && Number.isFinite(j.duration)
+        ? j.duration
+        : null;
+    // Elapsed only exists once a job finished; running jobs stay at the end.
+    if (field === 'elapsed')
+      return j.startedAt && j.endedAt ? j.endedAt - j.startedAt : null;
+    return null;
+  }
+  function orderedJobs() {
+    const list = jobs.filter((j) => j.row && !j.removed);
+    const newestFirst = (a, b) => (b.n || 0) - (a.n || 0);
+    const [field, direction] = queueSort.split(':');
+    if (!direction) return list.sort(newestFirst);
+    const sign = direction === 'desc' ? -1 : 1;
+    return list.sort((a, b) => {
+      const left = sortValue(a, field);
+      const right = sortValue(b, field);
+      if (left === null || right === null) {
+        if (left === null && right === null) return newestFirst(a, b);
+        // Jobs without the metric go last in either direction.
+        return left === null ? 1 : -1;
+      }
+      const result =
+        typeof left === 'string'
+          ? left.localeCompare(right, 'zh-Hans-CN', { numeric: true })
+          : left - right;
+      return result ? result * sign : newestFirst(a, b);
+    });
+  }
+  function applyQueueOrder() {
+    const container = $('jobs');
+    const wanted = orderedJobs();
+    const current = [...container.children];
+    if (
+      wanted.length === current.length &&
+      wanted.every((job, index) => job.row === current[index])
+    )
+      return;
+    for (const job of wanted) container.append(job.row);
+  }
+  $('queueSort').onchange = () => {
+    queueSort = $('queueSort').value;
+    writeLocal(sortKey, queueSort);
+    applyQueueOrder();
+  };
+
   function coverIcon(j) {
     const cover = j.cover;
     if (j.coverState === j.state) return;
@@ -68,8 +133,7 @@ export function setupQueueView({
       );
       icon.setAttribute('aria-hidden', 'true');
       cover.append(icon);
-      const action = terminal(j) ? '查看任务详情 ' : '选择任务 ';
-      cover.setAttribute('aria-label', action + j.n + ' · ' + states[j.state]);
+      cover.setAttribute('aria-label', '查看任务详情 ' + j.n + ' · ' + states[j.state]);
     }
   }
   function render(j) {
@@ -84,9 +148,7 @@ export function setupQueueView({
         else batchSelection.delete(j.client);
         updateQueueTools();
       };
-      j.cover = button('', () =>
-        terminal(j) ? showResult(j) : selectJob(j, false),
-      );
+      j.cover = button('', () => selectJob(j, true));
       j.cover.className = 'job-cover';
       const content = elem('div', 'job-content');
       const line = elem('div', 'queue-line');
@@ -105,7 +167,8 @@ export function setupQueueView({
       j.badge = elem('span', 'state');
       j.clock = elem('span', 'note job-clock');
       j.meta = elem('span', 'note');
-      details.append(j.badge, j.clock, j.meta);
+      j.stageEl = elem('span', 'note job-stage');
+      details.append(j.badge, j.clock, j.meta, j.stageEl);
       if (j.imported) details.append(elem('span', 'state', '服务器同步'));
       j.metrics = elem('div', 'job-metrics');
       j.info = elem('div', 'notice');
@@ -135,8 +198,13 @@ export function setupQueueView({
     j.clock.textContent = timeText(j);
     j.metrics.textContent = jobParams(j);
     j.meta.textContent = j.note || '';
+    // Standalone mode already folds the node text into the note; hosted mode
+    // keeps the server note and adds the live node/step line beside it.
+    j.stageEl.textContent = j.stage && j.stage !== j.note ? j.stage : '';
+    j.stageEl.hidden = !j.stageEl.textContent;
     j.info.textContent = [j.warn, j.mediaNote].filter(Boolean).join('\n');
-    j.bar.hidden = terminal(j);
+    // An unmeasured bar only means "busy"; queued jobs must not look half done.
+    j.bar.hidden = terminal(j) || (!j.total && j.state !== 'running');
     j.bar.max = j.total || 1;
     if (j.value == null) j.bar.removeAttribute('value');
     else j.bar.value = j.value;
@@ -146,7 +214,9 @@ export function setupQueueView({
     j.cancelButton.hidden = terminal(j);
     j.cancelButton.textContent = j.cancel ? '等待确认' : '取消';
     j.cancelButton.disabled = !!j.cancel;
+    updatePlayer(j);
     updateQueueTools();
+    applyQueueOrder();
   }
   setInterval(() => {
     for (const j of jobs)
@@ -333,6 +403,14 @@ export function setupQueueView({
       deleteDialog.close();
       return;
     }
+    if (hosted) {
+      try {
+        await workspaceRequest('delete','POST',{clients:tasks.map(j => j.client)});
+        removeDeletedRows(new Set(tasks.map(j => j.client)));
+        deleteDialog.close();
+      } catch (error) { queueNotice(error.message,true); }
+      return;
+    }
     const removed = readRemovedJobs();
     for (const j of tasks) {
       removed.add(j.client);
@@ -430,5 +508,5 @@ export function setupQueueView({
     }
   }
 
-  return { render, updateQueueTools, activateQueueTab, queueNotice };
+  return { render, updateQueueTools, activateQueueTab, queueNotice, removeRows:removeDeletedRows };
 }

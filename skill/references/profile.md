@@ -19,6 +19,7 @@
 | `steps` | `{mode:"integer", field:[id,key], min:1, max:30}` 映射整数步数。已验证支持的加速工作流可用 `mode:"sigmas"`，只在改步数后按原序列分段线性重采样。区间需包含原步数。可指定 `increment`。 |
 | `duration` | `{field:[id,key], min:1, max:30}` 映射以秒为单位的数值。可设 `increment`。若已有帧对齐公式是向上对齐至 `base + period × k`，可加 `alignment:{base:5,period:17}` 和顶层 `fps` 以显示预计实际时长。其余规则单独适配。 |
 | `fps` | 工作流的真实输出帧率。不要把展示值写回工作流。 |
+| 直接帧数输入 | 当 `duration.field` 连接以帧为单位的长度时，可使用 `duration.unit="frames"` 和顶层 `fps`。`min`、`max`、`increment` 按帧填写并保留工作流原值。H3 使用从 5 帧起、每档 17 帧的序列。界面同时显示帧数及折算时长，分镜 TXT 仍按秒解析。 |
 | `references` | 按用户所需选择顺序排列 `{kind:"image", file:[加载器ID,文件字段], targets:[[消费节点ID,连接字段],...], required:true}`。`kind` 可选 `image`、`video` 或 `audio`，旧配置缺省为图片。允许省略的动态槽可将 `required` 设为 false。遗漏可选参考图时仅解除对应连接及删去不再被引用的指定加载器。其他固定图像节点保持原状。 |
 | `referenceTag` | 向后兼容的图片标签名，例如 `Picture`。 |
 | `referenceTags` | 仅设置模型支持的类型标签，例如 `{"image":"Picture","video":"Video","audio":"Audio"}`。同类型各自从 1 开始编号。没有标签约定的类型只绑定文件节点。 |
@@ -28,6 +29,7 @@
 | `sampler`、`stages` | 采样节点 ID 和可选的 `{节点ID:中文阶段名}`，用于细化 WebSocket 进度。 |
 | `matchIgnore` | 识别同工作流时排除比较的可变字段，如输出名前缀。配置中已暴露的字段自动忽略其值。保留对模型、核心连接和其他固定字段的比较。 |
 | `storageKey` | 可选的短工作流标识。构建器缺省从图和配置派生。为同一工作台发布兼容更新时，复用既有标识与 HTML 路径，便于读取旧草稿。 |
+| `advanced` | 可选节点字段列表，每项使用 `{field:[id,key],kind:"number",min:0,max:1,step:0.01}` 等形式。支持 text、boolean、integer、number 和带 options 的 enum。字段必须指向工作流中已有的字面输入。选中种子时，高级参数以节点原值为初始种子，可分别为手动和批量任务修改。 |
 
 ## 兼容已有 Frameform
 
@@ -52,4 +54,4 @@
 
 此前的 Pika H3 Flex 工作流使用 `PrimitiveStringMultiline.value`（138）、`PrimitiveFloat.value`（132）、`ResolutionSelector`（115）及 `ManualSigmas.sigmas`（147）。图像链接位于 136 的 `ref_images.ref_image_0` 至 `ref_images.ref_image_8`，应读取实际连线取得各加载器 ID。输出为 152，视频解码 IMAGE 批在 122 的输出 0。时长表达式按 24 fps 转帧并向上对齐到 `5 + 17 × k`。仅在新 JSON 仍具有这些节点和表达式时沿用该映射。
 
-若遇到帧数直接输入、多个正向提示词、非标准音视频适配链、特殊上传或输出协议，复制模板适配器到本次工作目录进行有针对性的扩展。保留工作流默认字面值，避免照搬旧模型的选项。
+若遇到多个正向提示词、非标准音视频适配链或特殊上传与输出协议，复制模板适配器到本次工作目录进行有针对性的扩展。保留工作流默认字面值，避免照搬旧模型的选项。

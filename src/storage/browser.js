@@ -1,15 +1,22 @@
-import { legacyFrameform, profile } from '../comfy/config.js';
+import { hosted, workspaceValue, writeWorkspace, workspaceFile } from './workspace.js';
+import { legacyFrameform, profile, workbenchId } from '../comfy/config.js';
 
+const owningLocation =
+  workbenchId && window.parent !== window && location.href === 'about:srcdoc'
+    ? window.parent.location
+    : location;
 const openingPath =
-  location.protocol === 'file:'
-    ? location.pathname
-    : location.pathname.replace(/\/$/, '');
-const pageKey = legacyFrameform
+  owningLocation.protocol === 'file:'
+    ? owningLocation.pathname
+    : owningLocation.pathname.replace(/\/$/, '');
+const workflowPageKey = (storageKey) => hosted ? storageKey : storageKey + ':' + openingPath;
+const pageKey = hosted ? (workbenchId || profile.storageKey) : legacyFrameform
   ? openingPath
-  : profile.storageKey + ':' + openingPath;
+  : workflowPageKey(profile.storageKey);
 let storageDB;
 
 function readLocal(key, fallback) {
+  if (hosted) return workspaceValue(key, fallback);
   try {
     return JSON.parse(localStorage.getItem(key)) ?? fallback;
   } catch {
@@ -17,6 +24,7 @@ function readLocal(key, fallback) {
   }
 }
 function writeLocal(key, value) {
+  if (hosted) return writeWorkspace(key,value).catch(() => false);
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
@@ -35,6 +43,7 @@ function storage() {
   return storageDB;
 }
 async function fileData(key, value) {
+  if (hosted) return workspaceFile(key, value);
   const db = await storage();
   if (!db) throw Error('无法访问浏览器存储');
   return new Promise((resolve, reject) => {
@@ -48,4 +57,4 @@ async function fileData(key, value) {
   });
 }
 
-export { pageKey, readLocal, writeLocal, storage, fileData };
+export { pageKey, workflowPageKey, readLocal, writeLocal, storage, fileData };

@@ -78,7 +78,7 @@ def validate_profile(graph, profile):
     if not isinstance(profile, dict):
         raise ValueError("The profile must be a JSON object.")
 
-    def field(pair, label, predicate):
+    def field(pair, label, predicate, *, require_reachable=True):
         if not (
             isinstance(pair, list)
             and len(pair) == 2
@@ -87,7 +87,7 @@ def validate_profile(graph, profile):
             and pair[1] in graph[pair[0]]["inputs"]
         ):
             raise ValueError(f"{label} must name an existing [node ID, input key].")
-        if pair[0] not in reachable:
+        if require_reachable and pair[0] not in reachable:
             raise ValueError(f"{label} must belong to an output branch.")
         value = graph[pair[0]]["inputs"][pair[1]]
         if not predicate(value):
@@ -154,7 +154,13 @@ def validate_profile(graph, profile):
         value = field(duration.get("field"), "duration.field", is_number)
         slider(duration, "duration", value)
         if duration["min"] <= 0:
-            raise ValueError("duration bounds must be positive seconds.")
+            raise ValueError("duration bounds must be positive.")
+        if duration.get("unit") == "frames" and not (
+            fps
+            and type(value) is int
+            and all(type(duration.get(k, 1)) is int for k in ("min", "max", "increment"))
+        ):
+            raise ValueError("Frame durations need integer bounds, increment and value, and a positive fps.")
         alignment = duration.get("alignment")
         if alignment and not (
             fps
@@ -293,6 +299,83 @@ def validate_profile(graph, profile):
             if tuple(target) in claimed:
                 raise ValueError("A reference target belongs to only one slot.")
             claimed.add(tuple(target))
+    advanced = profile.get("advanced", [])
+    if not isinstance(advanced, list):
+        raise ValueError("advanced must contain a list of node field definitions.")
+    standard_fields = {
+        tuple(pair)
+        for pair in (
+            profile.get("prompt"),
+            (profile.get("steps") or {}).get("field"),
+            (profile.get("duration") or {}).get("field"),
+            *(
+                size[key]
+                for key in ("ratio", "megapixels", "width", "height")
+                if size and key in size
+            ),
+            *(slot["file"] for slot in slots),
+        )
+        if pair
+    }
+
+    def numeric_widget(value):
+        return is_number(value) and (
+            not float(value).is_integer() or abs(value) < 2**53
+        )
+
+    def widget_type(value):
+        if numeric_widget(value):
+            return "number"
+        if type(value) is bool:
+            return "boolean"
+        if type(value) is str:
+            return "text"
+
+    seen_advanced = set()
+    for definition in advanced:
+        if not isinstance(definition, dict):
+            raise ValueError("Each advanced field needs an object definition.")
+        pair = definition.get("field")
+        original = field(
+            pair,
+            "advanced field",
+            lambda value: widget_type(value) is not None,
+            require_reachable=False,
+        )
+        key = tuple(pair)
+        if key in standard_fields or key in seen_advanced:
+            raise ValueError(
+                "An advanced field must be distinct from existing controls."
+            )
+        seen_advanced.add(key)
+        kind = definition.get("kind")
+        source_type = widget_type(original)
+        if kind == "enum":
+            options = definition.get("options")
+            if not (
+                isinstance(options, list)
+                and original in options
+                and all(widget_type(option) == source_type for option in options)
+            ):
+                raise ValueError(
+                    "An advanced enum needs typed options that include the original value."
+                )
+        elif kind == "integer":
+            if not numeric_widget(original) or not float(original).is_integer():
+                raise ValueError("An advanced integer needs an integer input.")
+        elif kind not in ("text", "boolean", "number") or kind != source_type:
+            raise ValueError("The advanced control type must match the input value.")
+        if kind in ("integer", "number"):
+            if any(
+                key in definition and not is_number(definition[key])
+                for key in ("min", "max", "step")
+            ):
+                raise ValueError("Advanced numeric bounds must be finite.")
+            if (
+                definition.get("min", -math.inf) > definition.get("max", math.inf)
+                or definition.get("step", 1) <= 0
+            ):
+                raise ValueError("Advanced numeric bounds or increment are invalid.")
     if "legacyFrameform" in profile and type(profile["legacyFrameform"]) is not bool:
         raise ValueError("legacyFrameform must be a boolean.")
     still_ids = profile.get("firstFrameIds")

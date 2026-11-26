@@ -1,3 +1,4 @@
+import { hosted } from './workspace.js';
 import { legacyFrameform } from '../comfy/config.js';
 import {
   jobs,
@@ -8,13 +9,24 @@ import {
 } from '../jobs/state.js';
 import { pageKey, readLocal, writeLocal } from './browser.js';
 
+const workflowSessionKey = (key) => 'frameform.jobs.v1.' + key;
 const sessionKey = legacyFrameform
   ? 'frameform.jobs.v1'
-  : 'frameform.jobs.v1.' + pageKey;
+  : workflowSessionKey(pageKey);
+function jobSession(key) {
+  if (hosted) return [];
+  try {
+    const records = JSON.parse(sessionStorage.getItem(key) || '[]');
+    return Array.isArray(records) ? records : [];
+  } catch {
+    return [];
+  }
+}
 const historyKey = 'frameform.history.v2.' + pageKey;
 const deletedJobsKey = 'frameform.deleted-jobs.v1.' + pageKey;
 const readRemovedJobs = () => new Set(readLocal(deletedJobsKey, []));
 function persist() {
+  if (hosted) return;
   const removed = readRemovedJobs();
   const owned = jobs.filter(
     (j) => !isJobDeleted(removed, j) && (j.sent || terminal(j)),
@@ -34,6 +46,7 @@ function persist() {
     'cancel',
     'cancelAck',
     'results',
+    'outputNodes',
     'form',
     'startedAt',
     'endedAt',
@@ -64,7 +77,7 @@ function persist() {
 
 function restoreJobs(onRestore) {
   try {
-    const current = JSON.parse(sessionStorage.getItem(sessionKey) || '[]');
+    const current = jobSession(sessionKey);
     const saved = new Map(current.map((j) => [jobKey(j), j]));
     for (const j of readLocal(historyKey, [])) {
       if (!terminal(j)) continue;
@@ -83,6 +96,8 @@ function restoreJobs(onRestore) {
 
 export {
   sessionKey,
+  workflowSessionKey,
+  jobSession,
   historyKey,
   deletedJobsKey,
   readRemovedJobs,
