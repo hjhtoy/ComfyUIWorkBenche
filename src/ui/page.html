@@ -17,6 +17,10 @@ APP_CSS
 <div class="editor-box"><div id="editor" role="textbox" aria-labelledby="promptLabel" aria-multiline="true" contenteditable="true" spellcheck="false" data-empty="true" data-placeholder="WORKBENCH_PLACEHOLDER"></div><div class="prompt-foot" id="refTools"><div class="prompt-tools"><button class="button refbtn" id="addRef"><svg class="ico" aria-hidden="true"><use href="#i-image"/></svg> 添加素材</button><button class="button refbtn" id="importTxt"><svg class="ico" aria-hidden="true"><use href="#i-upload"/></svg> 导入分镜 TXT</button><input id="txtFile" type="file" accept=".txt,text/plain" hidden></div><span class="count"><span id="refCount" class="sr">0</span><span id="refUsage"></span></span></div></div>
 </div><div class="params"><div class="params-head"><h3>画面参数</h3><div class="picture-tools"><button type="button" id="openAdvanced" class="button" hidden>高级参数</button><label class="ratio"><span class="sr">画幅比例</span><svg class="ico" aria-hidden="true"><use href="#i-frame"/></svg><select id="ratio"><option>16:9</option><option>9:16</option><option>1:1</option></select></label></div></div>
 <div class="size-field"><label for="size">输出尺寸</label><select id="size"></select></div>
+<div class="resolution-fields" hidden>
+  <label>宽度（px）<input id="width" type="number" min="1" step="1" inputmode="numeric"></label>
+  <label>高度（px）<input id="height" type="number" min="1" step="1" inputmode="numeric"></label>
+</div>
 <div class="slider"><div class="field-head"><label for="duration">视频时长</label><output for="duration" id="durationValue"></output></div>
 <input id="duration" type="range" min="1" max="30" step="1" aria-describedby="timing">
 <div class="scale"><span>1 秒</span><span>30 秒</span></div></div>
@@ -42,6 +46,10 @@ APP_CSS
   <div class="batch-parameter-grid">
     <label class="batch-parameter">画幅比例<select id="batchRatio"></select></label>
     <label class="batch-parameter size-field">输出尺寸<select id="batchSize"></select></label>
+    <div class="resolution-fields" hidden>
+      <label>宽度（px）<input id="batchWidth" type="number" min="1" step="1" inputmode="numeric"></label>
+      <label>高度（px）<input id="batchHeight" type="number" min="1" step="1" inputmode="numeric"></label>
+    </div>
     <div class="slider batch-steps"><div class="field-head"><label for="batchSteps">采样步数</label><output for="batchSteps" id="batchStepsValue"></output></div><input id="batchSteps" type="range"><div class="scale"><span></span><span></span></div></div>
     <button type="button" id="batchAdvanced" class="button" hidden>高级参数</button>
   </div>
@@ -81,7 +89,10 @@ APP_CSS
   <div id="materialMove" hidden><span id="selectionCount"></span><select id="moveFolder" aria-label="目标目录"></select><button type="button" id="moveMaterials" class="button">移动</button></div>
   </div></div><p id="materialStatus" class="note" role="status"></p><p id="pickError" class="notice" role="alert"></p></div></dialog>
 <dialog id="deleteTasks" aria-labelledby="deleteTitle"><div class="card-head"><h2 id="deleteTitle" class="danger">删除任务记录</h2></div><div class="picker-body">
-<p id="deleteMessage" class="danger"></p><div class="delete-actions"><button class="button" id="keepTasks" autofocus>取消</button><button class="button danger" id="confirmDelete">确认删除</button></div>
+<p id="deleteMessage" class="danger"></p>
+<label class="delete-files"><input type="checkbox" id="deleteFiles" aria-describedby="deleteFilesHint">同时删除本地结果文件</label>
+<p id="deleteFilesHint" class="note">勾选后将永久删除工作台管理的本地结果文件。浏览器下载的副本需手动删除。</p>
+<p id="deleteError" class="danger" role="status"></p><div class="delete-actions"><button class="button" id="keepTasks" autofocus>取消</button><button class="button danger" id="confirmDelete">确认删除</button></div>
 </div></dialog>
 <dialog id="player" aria-labelledby="playerTitle">
 <div class="player-layout">
@@ -105,17 +116,18 @@ APP_CSS
 <label class="theme-choice" data-swatch="editorial"><input type="radio" name="theme" value="editorial"><span class="theme-preview" aria-hidden="true"></span><span>纸墨编辑室</span></label>
 <label class="theme-choice" data-swatch="cinema"><input type="radio" name="theme" value="cinema"><span class="theme-preview" aria-hidden="true"></span><span>墨金影院</span></label>
 <label class="theme-choice" data-swatch="lilac"><input type="radio" name="theme" value="lilac"><span class="theme-preview" aria-hidden="true"></span><span>雾紫工坊</span></label>
+<label class="theme-choice" data-swatch="celadon"><input type="radio" name="theme" value="celadon"><span class="theme-preview" aria-hidden="true"></span><span>青瓷庭院</span></label>
+<label class="theme-choice" data-swatch="terracotta"><input type="radio" name="theme" value="terracotta"><span class="theme-preview" aria-hidden="true"></span><span>赤陶暖砂</span></label>
+<label class="theme-choice" data-swatch="graphite"><input type="radio" name="theme" value="graphite"><span class="theme-preview" aria-hidden="true"></span><span>石墨荧绿</span></label>
 </div><p class="notice" id="themeStatus" role="status"></p>
-</fieldset><div id="resultSettings"><h3 class="settings-section-title">结果保存</h3>
-<p class="note">任务完成后自动把视频和首帧保存到下面选择的文件夹。播放器仍可手动下载。</p>
-<div class="setting"><button type="button" class="button" id="pickDirectory">选择文件夹…</button><span class="note" id="directoryName"></span><button type="button" class="button" id="clearDirectory" hidden>清除选择</button></div>
-<p class="note">未选择文件夹时，任务完成后自动下载到浏览器下载目录。</p>
+</fieldset><div id="resultSettings"><h3 class="settings-section-title">当前工作流的结果保存</h3>
+<p id="directoryName" class="output-directory" aria-live="polite"></p>
+<div class="setting output-directory-actions">
+  <button type="button" class="button" id="pickDirectory">选择文件夹…</button>
+  <button type="button" class="button" id="saveOutputsPath" disabled>保存</button>
+  <button type="button" class="button" id="clearDirectory" disabled>使用默认目录</button>
+</div>
 <p class="notice" id="outputsStatus" role="status"></p>
-</div><div id="hostedOutputSettings" hidden><h3 class="settings-section-title">服务器输出目录</h3>
-<p class="note">服务端在任务完成后把视频和首帧写到这个绝对路径，不依赖浏览器授权；留空使用默认目录。</p>
-<div class="setting"><label for="outputsPath">目录</label><input id="outputsPath" type="text" spellcheck="false" autocomplete="off"><button type="button" class="button" id="saveOutputsPath">保存</button></div>
-<p class="note" id="outputsDefault"></p>
-<p class="notice" id="hostedOutputsStatus" role="status"></p>
 </div><div id="runninghubSettings" hidden><h3 class="settings-section-title">RunningHub</h3>
 <p class="note">使用 RunningHub 云端工作流时，在这里配置 API Key（保存在工作区主机，不回传到页面）；服务器地址填 https://www.runninghub.cn。</p>
 <div class="setting"><label for="runninghubKey">API Key</label><input id="runninghubKey" type="password" autocomplete="off" spellcheck="false" placeholder="已配置时留空保持不变"></div>

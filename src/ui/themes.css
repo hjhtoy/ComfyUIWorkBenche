@@ -181,16 +181,18 @@
   padding-top: 13px;
   font-size: 13px;
 }
-#hostedOutputSettings input {
-  min-width: 0;
-  flex: 1;
+.output-directory {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
   background: var(--surface-muted);
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--control-radius);
   padding: 8px 11px;
   color: var(--ink);
   font: 13px var(--mono);
-  height: 36px;
+}
+.output-directory-actions {
+  flex-wrap: wrap;
 }
 .server,
 .card {
@@ -435,6 +437,144 @@
   --swatch-panel: #fdfbff;
   --swatch-line: #d6c8e8;
   --swatch-accent: #6640af;
+}
+
+:root[data-theme='celadon'] {
+  --paper: #e2eee8;
+  --panel: #f7fcf9;
+  --ink: #153b32;
+  --muted: #415f55;
+  --line: #c1d8cc;
+  --warm: #00685a;
+  --accent-hover: #005549;
+  --focus: #07806d;
+  --tint: #ddf2e8;
+  --green: #245d40;
+  --success-bg: #dbefdf;
+  --danger: #96392e;
+  --danger-border: #d4afa8;
+  --danger-bg: #f8e9e5;
+  --surface-muted: #edf6f0;
+  --editor-bg: #f2f9f5;
+  --badge-bg: #e0efe7;
+  --hover-bg: #e3f0e9;
+  --border-control: #a5c3b4;
+  --border-hover: #648f7e;
+  --placeholder: #526d63;
+  --tag-ink: #14594a;
+  --tag-bg: #dcefe5;
+  --tag-border: #a9cebc;
+  --select-row: #def0e7;
+  --hover-row: #ebf6f0;
+  --stage: #102f29;
+  --stage-muted: #bed8cf;
+  --modal-shade: #142e26b8;
+  --card-radius: 15px;
+  --control-radius: 7px;
+}
+:root[data-theme='celadon'] .card-head {
+  background: var(--surface-muted);
+}
+:root[data-theme='celadon'] .brandmark {
+  border-radius: 10px;
+}
+.theme-choice[data-swatch='celadon'] {
+  --swatch-bg: #e2eee8;
+  --swatch-panel: #f7fcf9;
+  --swatch-line: #a5c3b4;
+  --swatch-accent: #00685a;
+}
+
+:root[data-theme='terracotta'] {
+  --paper: #f4e6d9;
+  --panel: #fff7ee;
+  --ink: #42271f;
+  --muted: #6f4e41;
+  --line: #e2cabc;
+  --warm: #9f3828;
+  --accent-hover: #85301f;
+  --focus: #a74832;
+  --tint: #f9e4d7;
+  --green: #426348;
+  --success-bg: #e4eddd;
+  --danger: #962637;
+  --danger-border: #dfacae;
+  --danger-bg: #fce9e6;
+  --surface-muted: #faede2;
+  --editor-bg: #fffbf5;
+  --badge-bg: #f3e1d3;
+  --hover-bg: #f7e7da;
+  --border-control: #cfaa97;
+  --border-hover: #a77965;
+  --placeholder: #79594a;
+  --tag-ink: #783524;
+  --tag-bg: #f7e2d3;
+  --tag-border: #e6b9a1;
+  --select-row: #fae5d9;
+  --hover-row: #fbefe5;
+  --stage: #332119;
+  --stage-muted: #e4c9b8;
+  --modal-shade: #35231ab9;
+  --card-radius: 8px;
+  --control-radius: 5px;
+}
+:root[data-theme='terracotta'] .nav,
+:root[data-theme='terracotta'] .card-head {
+  background: var(--surface-muted);
+}
+.theme-choice[data-swatch='terracotta'] {
+  --swatch-bg: #f4e6d9;
+  --swatch-panel: #fff7ee;
+  --swatch-line: #cfaa97;
+  --swatch-accent: #9f3828;
+}
+
+:root[data-theme='graphite'] {
+  color-scheme: dark;
+  --paper: #181a1b;
+  --panel: #222526;
+  --ink: #f0f2ec;
+  --muted: #b6bdb8;
+  --line: #3d4442;
+  --warm: #b8e66a;
+  --accent-hover: #d0f592;
+  --accent-ink: #202a11;
+  --focus: #cbef91;
+  --tint: #333d27;
+  --green: #a6debb;
+  --success-bg: #273e33;
+  --danger: #ffb2a6;
+  --danger-border: #95655f;
+  --danger-bg: #412b2a;
+  --surface-muted: #1b1e1f;
+  --editor-bg: #1d2020;
+  --badge-bg: #2c3231;
+  --hover-bg: #303634;
+  --border-control: #4b5551;
+  --border-hover: #75877d;
+  --placeholder: #9ba9a0;
+  --tag-ink: #d0eea0;
+  --tag-bg: #303d23;
+  --tag-border: #586b3f;
+  --select-row: #343d2c;
+  --hover-row: #2a322d;
+  --stage: #101212;
+  --stage-muted: #bcc8bd;
+  --modal-shade: #0b0d0cd6;
+  --card-radius: 6px;
+  --control-radius: 4px;
+}
+:root[data-theme='graphite'] .card-head {
+  background: var(--badge-bg);
+}
+:root[data-theme='graphite'] .section-title .ico {
+  color: var(--warm);
+}
+.theme-choice[data-swatch='graphite'] {
+  --swatch-bg: #181a1b;
+  --swatch-panel: #2c3231;
+  --swatch-line: #4b5551;
+  --swatch-accent: #b8e66a;
 }
 
 .queue-tabs {
@@ -835,6 +975,10 @@
 }
 .batch-parameter[hidden] {
   display: none;
+}
+.batch-parameter-grid .resolution-fields {
+  grid-column: 1 / -1;
+  order: 1;
 }
 .batch-parameter select,
 .advanced-row input:not([type='checkbox']),

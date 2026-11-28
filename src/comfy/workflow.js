@@ -10,6 +10,9 @@ import {
   writeField,
   stepsFrom,
   pixelDimensions,
+  resolutionLinks,
+  exactResolution,
+  validResolution,
   durationSeconds,
   durationFieldValue,
 } from './config.js';
@@ -70,7 +73,15 @@ function buildGraph(j, paths) {
   if (profile.prompt) writeField(graph, profile.prompt, j.prompt);
   if (profile.duration)
     writeField(graph, profile.duration.field, durationFieldValue(j.duration));
-  if (sizeConfig?.mode === 'selector') {
+  if (exactResolution && validResolution(j.resolution)) {
+    if (sizeConfig.mode === 'preset') {
+      writeField(graph, sizeConfig.width, j.resolution[0]);
+      writeField(graph, sizeConfig.height, j.resolution[1]);
+    } else {
+      for (const [index, fields] of resolutionLinks.entries())
+        for (const field of fields) writeField(graph, field, j.resolution[index]);
+    }
+  } else if (sizeConfig?.mode === 'selector') {
     writeField(graph, sizeConfig.ratio, ratios[j.ratio]);
     writeField(graph, sizeConfig.megapixels, j.mp);
   } else if (sizeConfig?.mode === 'preset') {
@@ -138,6 +149,7 @@ const mutableFields = [
 const mutableFieldKeys = new Set(
   mutableFields.map((pair) => JSON.stringify(pair)),
 );
+const resolutionFieldKeys = new Set(resolutionLinks.flat().map((pair) => JSON.stringify(pair)));
 function matchWorkflow(graph) {
   if (!graph || typeof graph !== 'object') return null;
   const entries = Object.entries(graph);
@@ -154,8 +166,11 @@ function matchWorkflow(graph) {
     if ([...mapped.values()].includes(id)) return false;
     mapped.set(original, id);
     return Object.entries(expected.inputs).every(([name, value]) => {
-      if (mutableFieldKeys.has(JSON.stringify([original, name]))) return true;
+      const key = JSON.stringify([original, name]);
+      if (mutableFieldKeys.has(key)) return true;
       const input = actual.inputs[name];
+      if (exactResolution && resolutionFieldKeys.has(key) &&
+          Number.isSafeInteger(input) && input > 0) return true;
       if (
         Array.isArray(value) &&
         value.length === 2 &&
@@ -194,17 +209,27 @@ function graphJobData(base, graph, mapped) {
     (key) => ratios[key] === read(sizeConfig?.ratio),
   );
   let mp = read(sizeConfig?.megapixels),
-    dimensions;
-  if (sizeConfig?.mode === 'selector' && ratio && Number.isFinite(mp))
-    dimensions = pixelDimensions(ratio, mp);
+    dimensions,
+    resolution;
+  if (sizeConfig?.mode === 'selector') {
+    const pair = resolutionLinks.map((fields) => {
+      const values = fields.filter(([id]) => mapped.has(id)).map(read);
+      return values.every((value) => value === values[0]) ? values[0] : undefined;
+    });
+    if (validResolution(pair)) {
+      resolution = pair;
+      dimensions = pair.join(' × ');
+    } else if (ratio && Number.isFinite(mp)) dimensions = pixelDimensions(ratio, mp);
+  }
   if (sizeConfig?.mode === 'preset') {
     const pair = [read(sizeConfig.width), read(sizeConfig.height)];
-    if (pair.every(Number.isFinite)) {
+    if (validResolution(pair)) {
       dimensions = pair.join(' × ');
       const index = directSizes.findIndex(
         (item) => String(item) === String(pair),
       );
       if (index >= 0) mp = index;
+      else resolution = pair;
     }
   }
   const prompt = String(read(profile.prompt) ?? '');
@@ -215,8 +240,9 @@ function graphJobData(base, graph, mapped) {
     html: content.innerHTML,
     refs,
     server: base,
-    ratio,
+    ratio: resolution ? undefined : ratio,
     mp,
+    ...(resolution && { resolution, customResolution: true }),
     duration,
     steps,
     advanced: filterAdvancedValues(

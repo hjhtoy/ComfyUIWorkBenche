@@ -9,7 +9,6 @@ import {
 } from '../comfy/workflow.js';
 import { legacyFrameform, profile, template } from '../comfy/config.js';
 import { mediaKeyForRef } from '../media/types.js';
-import { saveOutputs } from '../media/outputs.js';
 import { currentQueueBase } from '../ui/servers.js';
 import { api } from '../comfy/api.js';
 import { jobs, serverJobKey, terminal } from './state.js';
@@ -26,8 +25,6 @@ export function setupWorkspaceRunner({ render, updateQueueTools, removeRows }) {
         // One shared note beats a red message on every queued card.
         $('queueSync').textContent = connection || '';
         if (!rows) return;
-        // The first sync only loads history; do not re-save already-finished jobs.
-        const first = revision < 0;
         const incoming = new Set(rows.map((row) => row.client));
         removeRows(
           new Set(
@@ -37,7 +34,6 @@ export function setupWorkspaceRunner({ render, updateQueueTools, removeRows }) {
         const known = new Map(jobs.map((j) => [j.client, j]));
         for (const data of rows) {
           let job = known.get(data.client);
-          const wasDone = job?.state === 'done';
           const signature = JSON.stringify(data);
           if (job?.workspaceSnapshot === signature) continue;
           if (!job) {
@@ -46,8 +42,6 @@ export function setupWorkspaceRunner({ render, updateQueueTools, removeRows }) {
           }
           Object.assign(job, data, { workspaceSnapshot: signature });
           render(job);
-          if (!first && data.state === 'done' && !wasDone)
-            saveOutputs(job, render);
         }
         updateQueueTools();
         revision = rev;

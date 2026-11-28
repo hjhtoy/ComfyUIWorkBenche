@@ -90,7 +90,7 @@ async def verify():
         app.router.add_route("*", "/{tail:.*}", openapi)
         runner, base = await listen(app)
         http = ClientSession()
-        worker = Worker(store, http, lambda: temp / "out")
+        worker = Worker(store, http, lambda _workflow: temp / "out")
         store.set_secret("runninghub", "rh-test-key")
 
         # A stored asset the plan refers to.

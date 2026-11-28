@@ -3,12 +3,12 @@ import json
 import mimetypes
 import os
 import re
-import shutil
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import aiohttp
+from .store import downloads_directory, output_key
 
 TERMINAL = {"done", "failed", "cancelled", "lost"}
 # A server that stays unreachable this long cannot still hold these jobs: their
@@ -81,10 +81,6 @@ def results(outputs, allowed=None):
     return sorted(found.values(), key=lambda x: x["kind"] != "video")
 
 
-def output_key(job, item):
-    return "output:" + ":".join([job["base"], job["id"], item["filename"], item["subfolder"]])
-
-
 def file_base(value):
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value or ""))
     name = re.sub(r"\s+", " ", name).strip()
@@ -94,7 +90,7 @@ def file_base(value):
         name,
         flags=re.IGNORECASE,
     )
-    return (name or "任务")[:80]
+    return name[:80].strip(" .") or "任务"
 
 
 def runninghub_results(items):
@@ -121,7 +117,7 @@ class Worker:
     def __init__(self, store, session, outputs=None):
         self.store = store
         self.http = session
-        self.outputs = outputs or (lambda: Path.cwd() / "outputs")
+        self.outputs = outputs or (lambda _workflow: downloads_directory())
         self.tasks = {}
         self.sending = asyncio.Lock()
         self.uploads = {}
@@ -606,23 +602,12 @@ class Worker:
         row = self.store.media(key)
         if not row:
             return
-        target = Path(self.outputs()).expanduser()
-        target.mkdir(parents=True, exist_ok=True)
+        workflow = self.store.db.execute("SELECT workflow FROM jobs WHERE client=?", (job["client"],)).fetchone()[0]
+        target = Path(self.outputs(workflow)).expanduser()
         base = file_base(job.get("title"))
         suffix = Path(item["filename"]).suffix
-        dest = target / (base + suffix)
         source = self.store.root / row["path"]
-        if dest.exists():
-            # A retried archive of the same job must not create a second copy.
-            if dest.stat().st_size == source.stat().st_size:
-                return
-            dest = target / (base + "-" + str(job["client"])[:8] + suffix)
-        if dest.exists():
-            return
-        try:
-            os.link(source, dest)
-        except OSError:
-            shutil.copy2(source, dest)
+        self.store.export_output(job["client"], key, source, target / (base + suffix))
 
     async def archive(self, job):
         warn = ""

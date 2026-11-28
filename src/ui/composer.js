@@ -9,8 +9,6 @@ import {
   profile,
   legacyFrameform,
   ratios,
-  sizeConfig,
-  durationSeconds,
   durationFieldValue,
   readField,
 } from '../comfy/config.js';
@@ -32,7 +30,9 @@ import {
 } from '../storage/browser.js';
 import {
   generationSettings,
-  updateSizeOptions,
+  bindResolution,
+  restoreResolution,
+  manualPicture,
   controls,
 } from './parameters.js';
 
@@ -158,12 +158,7 @@ export function setupComposer(serverChanged) {
       refs,
       server: $('server').value,
       serverProfileId: $('serverList').value,
-      ratio: $('ratio').value,
-      mp: sizeConfig ? Number($('size').value) : undefined,
-      duration: profile.duration
-        ? durationSeconds($('duration').valueAsNumber)
-        : undefined,
-      steps: profile.steps ? $('steps').valueAsNumber : undefined,
+      ...generationSettings(),
       height: editor.style.height,
       advanced: advanced.snapshot(),
       ...(profile.restoredH3Controls && { h3ControlsRestored: true }),
@@ -208,8 +203,7 @@ export function setupComposer(serverChanged) {
         serverChanged(false, data.serverProfileId);
       }
       if (Object.hasOwn(ratios, data.ratio)) $('ratio').value = data.ratio;
-      if (Number.isFinite(data.mp)) updateSizeOptions(data.mp);
-      else updateSizeOptions();
+      restoreResolution(manualPicture, data);
       if (Number.isFinite(data.duration))
         $('duration').value = durationFieldValue(data.duration);
       if (Number.isInteger(data.steps)) $('steps').value = data.steps;
@@ -666,7 +660,7 @@ export function setupComposer(serverChanged) {
     titleCopy.remove();
     const title = storyboardFilename || titleText.slice(0, 80) || profile.title;
     return {
-      ...generationSettings(),
+      ...generationSettings(true),
       prompt,
       form: composerData(),
       files,
@@ -688,11 +682,7 @@ export function setupComposer(serverChanged) {
   watchWorkspace(draftKey, saved => applyComposer(saved), () =>
     !draftConflict && !restoring && !$('composer').contains(document.activeElement));
   function restoreDraft() {
-    $('ratio').onchange = () => {
-      updateSizeOptions();
-      saveDraft();
-    };
-    $('size').onchange = saveDraft;
+    bindResolution(manualPicture, saveDraft);
     for (const id of ['steps', 'duration'])
       $(id).oninput = () => {
         controls();

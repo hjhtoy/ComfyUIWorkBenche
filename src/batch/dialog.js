@@ -4,7 +4,8 @@ import { serverAddress } from '../ui/servers.js';
 import {
   setupPictureControls,
   pictureSettings,
-  populateSizeOptions,
+  bindResolution,
+  restoreResolution,
   updateSliderFill,
 } from '../ui/parameters.js';
 import { advancedSettings } from '../ui/advanced-parameters.js';
@@ -29,6 +30,8 @@ export function setupBatch(
     ratio: $('batchRatio'),
     size: $('batchSize'),
     steps: $('batchSteps'),
+    width: $('batchWidth'),
+    height: $('batchHeight'),
   };
   const preferencesKey = 'frameform.batch.v1.' + pageKey;
   setupPictureControls(picture);
@@ -36,7 +39,7 @@ export function setupBatch(
   const saved = readLocal(preferencesKey, {});
   if ([...picture.ratio.options].some((option) => option.value === saved.ratio))
     picture.ratio.value = saved.ratio;
-  populateSizeOptions(picture.size, picture.ratio.value, saved.mp);
+  restoreResolution(picture, saved);
   if (Number.isInteger(saved.steps)) picture.steps.value = saved.steps;
   advanced.set(saved.advanced);
   refreshSteps();
@@ -55,11 +58,7 @@ export function setupBatch(
       : '浏览器无法保存批量参数。';
     if (batchPreview) renderBatchPreview();
   }
-  picture.ratio.onchange = () => {
-    populateSizeOptions(picture.size, picture.ratio.value);
-    saveSettings();
-  };
-  picture.size.onchange = saveSettings;
+  bindResolution(picture, saveSettings);
   picture.steps.oninput = () => {
     refreshSteps();
     saveSettings();
@@ -200,6 +199,8 @@ export function setupBatch(
       ratio,
       dimensions,
       mp,
+      resolution,
+      customResolution,
       steps,
       serverProfileId,
       editorHeight,
@@ -211,6 +212,7 @@ export function setupBatch(
       serverProfileId,
       ratio,
       mp,
+      ...(resolution && { resolution, customResolution }),
       steps,
       duration: scene.duration,
       height: editorHeight,
@@ -228,6 +230,7 @@ export function setupBatch(
       ratio,
       dimensions,
       mp,
+      resolution,
       steps,
       duration: scene.duration,
     };
@@ -286,9 +289,16 @@ export function setupBatch(
     if (batchBusy || !batchPreview) return;
     const revision = batchRevision;
     const { root, scenes } = batchPreview;
+    let parameters;
+    try {
+      parameters = pictureSettings(picture, true);
+    } catch (error) {
+      $('batchError').textContent = error.message;
+      return;
+    }
     const settings = {
       ...batchPreview.settings,
-      ...pictureSettings(picture),
+      ...parameters,
       advanced: advanced.snapshot(),
     };
     const preflight = scenes.filter(

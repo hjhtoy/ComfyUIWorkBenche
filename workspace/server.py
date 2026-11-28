@@ -11,8 +11,9 @@ from urllib.parse import quote, urlsplit
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 
-from .store import Conflict, Store, backup, ensure_dir
-from .worker import TERMINAL, Worker, now, output_key, server_base
+from .folder_picker import choose_output_directory, picker_executable
+from .store import Conflict, Store, backup, downloads_directory, ensure_dir
+from .worker import TERMINAL, Worker, file_base, now, output_key, server_base
 
 OUTPUTS_KEY = "frameform.outputs.v1"
 
@@ -32,7 +33,7 @@ def create_app(root, html, host="127.0.0.1", password=None, outputs=None):
     default_outputs = (
         Path(outputs).expanduser().resolve()
         if outputs
-        else Path.cwd().resolve() / "outputs"
+        else downloads_directory()
     )
     @web.middleware
     async def boundary(request, handler):
@@ -92,20 +93,29 @@ def create_app(root, html, host="127.0.0.1", password=None, outputs=None):
     worker = None
     app.cleanup_ctx.append(lifecycle)
     routes = web.RouteTableDef()
+    directory_picker = asyncio.Lock()
 
-    def output_setting():
-        value = store.record(OUTPUTS_KEY)["value"]
-        return (
-            Path(value).expanduser()
-            if isinstance(value, str) and value.strip()
-            else default_outputs
-        )
+    def output_record(workflow):
+        record = store.record(OUTPUTS_KEY + "." + workflow)
+        if workflow == "pika-h3" and not record["rev"]:
+            record["value"] = store.record(OUTPUTS_KEY)["value"]
+        return record
 
-    # Create the folder up front so users can see where results will land.
-    try:
-        ensure_dir(output_setting())
-    except OSError:
-        pass
+    def output_setting(workflow):
+        value = output_record(workflow)["value"]
+        return Path(value).expanduser() if isinstance(value, str) and value else default_outputs
+
+    def local_desktop(request):
+        return loopback(request.remote) and loopback(request.url.host)
+
+    def output_response(request, workflow, record):
+        return web.json_response({
+            "outputs": str(output_setting(workflow)),
+            "default": str(default_outputs),
+            "configured": bool(record["value"]),
+            "rev": record["rev"],
+            "canChooseDirectory": bool(local_desktop(request) and picker_executable()),
+        })
 
     @routes.get("/")
     @routes.get("/Frameform.html")
@@ -121,18 +131,27 @@ def create_app(root, html, host="127.0.0.1", password=None, outputs=None):
 
     @routes.get("/workspace/settings")
     async def get_settings(request):
-        record = store.record(OUTPUTS_KEY)
-        current = record["value"]
-        return web.json_response({
-            "outputs": current if isinstance(current, str) and current.strip() else str(default_outputs),
-            "default": str(default_outputs),
-            "rev": record["rev"],
-        })
+        workflow = request.query.get("workflow", "pika-h3")
+        return output_response(request, workflow, output_record(workflow))
+
+    @routes.post("/workspace/settings/choose-directory")
+    async def pick_directory(request):
+        if not local_desktop(request):
+            raise web.HTTPForbidden()
+        if directory_picker.locked():
+            raise Conflict("系统目录选择器已打开。")
+        workflow = request.query.get("workflow", "pika-h3")
+        async with directory_picker:
+            path = await choose_output_directory(output_setting(workflow))
+        return web.json_response({"path": str(path) if path else None})
 
     @routes.put("/workspace/settings")
     async def put_settings(request):
         data = await request.json()
-        raw = str(data.get("outputs") or "").strip()
+        workflow = request.query.get("workflow", "pika-h3")
+        raw = str(data.get("outputs") or "")
+        if not raw.strip():
+            raw = ""
         path = Path(raw).expanduser().resolve() if raw else default_outputs
         if path.exists() and not path.is_dir():
             raise ValueError("输出目录是一个文件，请选择文件夹。")
@@ -140,10 +159,8 @@ def create_app(root, html, host="127.0.0.1", password=None, outputs=None):
             ensure_dir(path)
         except OSError as error:
             raise ValueError("无法创建输出目录：" + str(error))
-        record = store.put_record(OUTPUTS_KEY, data.get("rev", 0), str(path))
-        return web.json_response({
-            "outputs": str(path), "default": str(default_outputs), "rev": record["rev"]
-        })
+        record = store.put_record(OUTPUTS_KEY + "." + workflow, data.get("rev", 0), str(path) if raw else "")
+        return output_response(request, workflow, record)
 
     @routes.get("/workspace/provider")
     async def get_provider(request):
@@ -259,14 +276,42 @@ def create_app(root, html, host="127.0.0.1", password=None, outputs=None):
         return web.json_response({})
 
     @routes.post("/workspace/delete")
+    @routes.post("/workspace/jobs/delete")
     async def delete(request):
-        clients = (await request.json())["clients"]
-        with store.db:
-            for cid in clients:
-                if store.job(cid)["state"] not in TERMINAL:
-                    raise Conflict("任务仍在执行")
-                store.db.execute("DELETE FROM jobs WHERE client=?", (cid,))
+        data = await request.json()
+        clients = data["clients"]
+        delete_files = data.get("deleteFiles", False)
+        if type(delete_files) is not bool:
+            raise ValueError("删除文件选项必须为布尔值")
+        if not isinstance(clients, list) or any(not isinstance(cid, str) for cid in clients):
+            raise ValueError("无效的任务编号")
+        selected = []
+        for cid in dict.fromkeys(clients):
+            row = store.db.execute("SELECT workflow FROM jobs WHERE client=?", (cid,)).fetchone()
+            if not row:
+                continue
+            job = store.job(cid)
+            if job["state"] not in TERMINAL or job.get("archivePending"):
+                raise Conflict("任务仍在执行或保存结果，请稍后删除。")
+            selected.append((job, row["workflow"]))
+        try:
+            store.delete_jobs(selected, legacy_output_paths, delete_files=delete_files)
+        except OSError as error:
+            raise ValueError("无法删除结果文件：" + str(error)) from error
         return web.json_response({})
+
+    def legacy_output_paths(job, workflow, item):
+        directories = {output_setting(workflow), default_outputs, Path.cwd() / "outputs"}
+        legacy = store.record(OUTPUTS_KEY)["value"]
+        if isinstance(legacy, str) and legacy:
+            directories.add(Path(legacy))
+        suffix = Path(item["filename"]).suffix
+        stem = file_base(job.get("title"))
+        tag = file_base(str(job["client"])[:8])
+        for directory in directories:
+            yield directory / (stem + "-" + tag + suffix)
+            # The original exporter hard-linked the unsuffixed name to the archive.
+            yield directory / (stem + suffix)
 
     @routes.get("/workspace/comfy")
     async def proxy(request):

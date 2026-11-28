@@ -77,7 +77,10 @@ async def main():
         await page.locator("#generate").click()
         await page.wait_for_function("jobs[0]?.id")
         await page.locator("#editor").fill("第二条：城市")
-        await page.locator("#size").select_option(label="512 × 768")
+        assert await page.locator("#size").locator("option").filter(has_text="1920 × 1080").count() == 1
+        await page.locator("#size").select_option("custom")
+        await page.locator("#width").fill("896")
+        await page.locator("#height").fill("1152")
         await page.locator("#steps").fill("25")
         await page.locator("#generate").click()
         await page.wait_for_function("jobs[1]?.id")
@@ -89,7 +92,7 @@ async def main():
         assert [
             (data["5"]["inputs"]["width"], data["5"]["inputs"]["height"])
             for data in posted
-        ] == [(768, 512), (512, 768)]
+        ] == [(768, 512), (896, 1152)]
         assert all(
             data["7"]["inputs"]["text"] == "negative fixture"
             and list(data) == list(posted[0])
@@ -109,7 +112,9 @@ async def main():
         await page.locator("#reuse").click()
         await page.reload()
         await page.get_by_text("草稿已保存").wait_for()
-        assert await page.locator("#size option:checked").inner_text() == "512 × 768"
+        assert await page.locator("#size").input_value() == "custom"
+        assert await page.locator("#width").input_value() == "896"
+        assert await page.locator("#height").input_value() == "1152"
         assert await page.locator("#editor").inner_text() == "第二条：城市"
         await page.set_viewport_size({"width": 390, "height": 844})
         assert await page.evaluate("document.documentElement.scrollWidth===innerWidth")

@@ -76,6 +76,10 @@ async def verify():
         with zipfile.ZipFile(await (await result.value).path()) as z:
             assert z.namelist() == ["任务-1-1-同名.mp4"]
         assert "任务 2 获取失败" in await page.locator("#queueNotice").inner_text()
+        await page.evaluate("""() => {
+            const job = jobs.find(j => j.n === 2);
+            return fileData(mediaKey(job, job.results[0]), new Blob(['video-2']));
+        }""")
         await page.set_viewport_size({"width": 390, "height": 850})
         assert await page.evaluate("document.documentElement.scrollWidth===innerWidth")
         await page.set_viewport_size({"width": 1440, "height": 900})
@@ -86,13 +90,20 @@ async def verify():
         other = await c.new_page()
         await other.goto(url)
         assert await other.locator(".job").count() == 3
-        await row3.get_by_role("button", name="删除", exact=True).click()
+        delete_files = page.get_by_role("checkbox", name="同时删除本地结果文件")
+        await row2.get_by_role("button", name="删除", exact=True).click()
+        assert not await delete_files.is_checked()
         await page.locator("#confirmDelete").click()
         await (
-            other.locator(".job").filter(has_text="失败任务").wait_for(state="detached")
+            other.locator(".job").filter(has_text="任务乙").wait_for(state="detached")
+        )
+        assert await page.evaluate(
+            "async()=>Boolean(await fileData('output:http://127.0.0.1:8199:comfy-two:同名.mp4:Video'))"
         )
         assert await page.locator(".job").count() == 3
         await page.locator("#batchDelete").click()
+        assert not await delete_files.is_checked()
+        await delete_files.check()
         await page.locator("#confirmDelete").click()
         await other.locator(".job").first.wait_for(state="detached")
         await page.wait_for_function(

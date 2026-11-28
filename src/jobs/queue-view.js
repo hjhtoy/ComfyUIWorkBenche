@@ -18,6 +18,7 @@ import {
   setPoster,
   downloadable,
   clearOutputCache,
+  deleteOutputFiles,
   outputBlob,
   downloadOutput,
   outputFilename,
@@ -211,6 +212,8 @@ export function setupQueueView({
     j.copy.hidden = !j.id;
     j.download.hidden = !downloadable(j);
     j.remove.hidden = !terminal(j);
+    j.remove.disabled = !!j.archivePending;
+    j.remove.title = j.archivePending ? '正在保存结果' : '';
     j.cancelButton.hidden = terminal(j);
     j.cancelButton.textContent = j.cancel ? '等待确认' : '取消';
     j.cancelButton.disabled = !!j.cancel;
@@ -329,10 +332,10 @@ export function setupQueueView({
     all.indeterminate = selected.length > 0 && selected.length < visible.length;
     $('batchDownload').disabled =
       downloadingJobs || !selected.some(downloadable);
-    $('batchDelete').disabled =
-      !selected.length || selected.some((j) => !terminal(j));
-    $('batchDelete').title = selected.some((j) => !terminal(j))
-      ? '请先取消或等待选中的任务结束'
+    const pending = selected.some((j) => !terminal(j) || j.archivePending);
+    $('batchDelete').disabled = !selected.length || pending;
+    $('batchDelete').title = pending
+      ? '请等待选中的任务执行并保存结果'
       : '';
     for (const j of jobs) {
       j.row.hidden = !shown.has(j);
@@ -384,12 +387,11 @@ export function setupQueueView({
   }
 
   function confirmRemoval(tasks) {
-    if (!tasks.length || tasks.some((j) => !terminal(j))) return;
+    if (!tasks.length || tasks.some((j) => !terminal(j) || j.archivePending)) return;
     pendingDeletes = tasks;
-    $('deleteMessage').textContent =
-      '将删除 ' +
-      tasks.length +
-      ' 条任务记录和对应的浏览器预览缓存。服务器输出和已下载的文件仍可使用。';
+    $('deleteMessage').textContent = '将删除 ' + tasks.length + ' 条任务记录。';
+    $('deleteFiles').checked = false;
+    $('deleteError').textContent = '';
     deleteDialog.showModal();
     $('keepTasks').focus();
   }
@@ -397,37 +399,46 @@ export function setupQueueView({
   deleteDialog.onclose = () => {
     pendingDeletes = [];
   };
+  deleteDialog.oncancel = (event) => {
+    if ($('confirmDelete').disabled) event.preventDefault();
+  };
   $('confirmDelete').onclick = async () => {
     const tasks = pendingDeletes.filter((j) => jobs.includes(j) && terminal(j));
     if (!tasks.length) {
       deleteDialog.close();
       return;
     }
-    if (hosted) {
-      try {
-        await workspaceRequest('delete','POST',{clients:tasks.map(j => j.client)});
-        removeDeletedRows(new Set(tasks.map(j => j.client)));
-        deleteDialog.close();
-      } catch (error) { queueNotice(error.message,true); }
-      return;
-    }
-    const removed = readRemovedJobs();
-    for (const j of tasks) {
-      removed.add(j.client);
-      removed.add(jobKey(j));
-    }
-    if (!writeLocal(deletedJobsKey, [...removed])) {
-      deleteDialog.close();
-      queueNotice('无法保存删除操作。请检查浏览器存储设置。', true);
-      return;
-    }
-    deleteDialog.close();
-    removeDeletedRows(removed);
-    queueNotice('已删除 ' + tasks.length + ' 条任务记录', true);
+    const deleteFiles = $('deleteFiles').checked;
+    $('confirmDelete').disabled = $('keepTasks').disabled = $('deleteFiles').disabled = true;
+    $('deleteError').textContent = '';
     try {
-      await Promise.all(tasks.map((j) => clearOutputCache(j)));
-    } catch {
-      queueNotice('任务记录已删除，部分浏览器缓存清理失败。', true);
+      if (hosted) {
+        // Older servers only expose /workspace/delete and ignore the file option.
+        await workspaceRequest('jobs/delete', 'POST', {
+          clients: tasks.map((job) => job.client),
+          deleteFiles,
+        });
+        removeDeletedRows(new Set(tasks.map(j => j.client)));
+      } else {
+        const removed = readRemovedJobs();
+        for (const j of tasks) {
+          if (deleteFiles) {
+            await deleteOutputFiles(j);
+            await clearOutputCache(j);
+          } else await j.savingOutputs;
+          removed.add(j.client);
+          removed.add(jobKey(j));
+        }
+        if (!writeLocal(deletedJobsKey, [...removed]))
+          throw Error('无法保存删除操作。请检查浏览器存储设置。');
+        removeDeletedRows(removed);
+      }
+      deleteDialog.close();
+      queueNotice('已删除 ' + tasks.length + ' 条任务记录', true);
+    } catch (error) {
+      $('deleteError').textContent = error.message;
+    } finally {
+      $('confirmDelete').disabled = $('keepTasks').disabled = $('deleteFiles').disabled = false;
     }
   };
   function removeDeletedRows(removed) {

@@ -84,13 +84,20 @@ async def main(path):
             """()=>({...snapshot().form,html:editor.innerText})"""
         )
         colors = {}
-        themes = ("classic", "midnight", "blueprint", "editorial", "cinema", "lilac")
+        themes = (
+            "classic", "midnight", "blueprint", "editorial", "cinema", "lilac",
+            "celadon", "terracotta", "graphite",
+        )
+        assert await page.locator("#themeSettings input").count() == len(themes)
         for theme in themes:
             await page.locator("#openSettings").click()
             await page.locator(f'.theme-choice[data-swatch="{theme}"]').click()
             assert await page.locator(
                 f'#themeSettings input[value="{theme}"]'
             ).is_checked()
+            assert await page.evaluate(
+                "JSON.parse(localStorage.getItem('frameform.theme.v1')) || 'classic'"
+            ) == theme
             await page.locator("#closeSettings").click()
             assert await page.locator("html").get_attribute("data-theme") == theme
             colors[theme] = await page.locator("body").evaluate(
@@ -103,16 +110,19 @@ async def main(path):
                 == original
             )
             assert await page.locator(".job:visible").count() == 2
-        assert len(set(colors.values())) == 6, colors
+        assert len(set(colors.values())) == len(themes), colors
         await page.reload()
         await page.get_by_text("草稿已保存", exact=True).wait_for()
-        assert await page.locator("html").get_attribute("data-theme") == "lilac"
+        assert await page.locator("html").get_attribute("data-theme") == "graphite"
         assert await page.locator(".job:visible").count() == 2
         assert await prompt.inner_text() == "切换主题要保留的提示词"
         for theme in themes:
             await page.set_viewport_size({"width": 390, "height": 844})
             await page.locator("#openSettings").click()
             await page.locator(f'.theme-choice[data-swatch="{theme}"]').click()
+            assert await page.locator("#settingsDialog").evaluate(
+                "dialog => dialog.scrollWidth === dialog.clientWidth"
+            )
             await page.locator("#closeSettings").click()
             assert await page.evaluate(
                 "document.documentElement.scrollWidth===innerWidth"
@@ -121,7 +131,7 @@ async def main(path):
                 assert await page.locator("#" + id).is_visible()
         assert not errors, errors
         print(
-            f"PASS {path.name}: server-isolated queue, refetch on dropdown/manual switch, background tracking, selection reset, six themes with draft intact, persisted theme, narrow viewport"
+            f"PASS {path.name}: server-isolated queue, refetch on dropdown/manual switch, background tracking, selection reset, nine themes with draft intact, persisted theme, narrow viewport"
         )
         await browser.close()
 

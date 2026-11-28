@@ -1,10 +1,10 @@
 import { hosted } from '../storage/workspace.js';
 import { elem } from '../ui/dom.js';
 import { outputURL } from '../comfy/api.js';
-import { storage, fileData } from '../storage/browser.js';
+import { storage, fileData, pageKey } from '../storage/browser.js';
 import { isJobDeleted } from '../jobs/state.js';
 import { readRemovedJobs, persist } from '../storage/jobs.js';
-import { directoryReady, refreshDirectory } from '../ui/settings.js';
+import { refreshDirectory } from '../ui/settings.js';
 
 function mediaFiles(outputs) {
   const result = [],
@@ -85,22 +85,25 @@ function markOutputSaved(client) {
   } catch {}
 }
 
-async function saveOutputs(j, render) {
+const exportKey = (job) => 'output-files:' + pageKey + ':' + job.client;
+const withOutputLock = (action) => navigator.locks
+  ? navigator.locks.request('frameform-output-files', action)
+  : action();
+
+function saveOutputs(j, render) {
+  j.savingOutputs ??= saveLocalOutputs(j, render).finally(() => {
+    delete j.savingOutputs;
+  });
+  return j.savingOutputs;
+}
+
+async function saveLocalOutputs(j, render) {
   const video = videoOf(j);
   const still = stillOf(j);
   // Video workflows save the video plus its poster; image-only jobs save the image.
-  if (!video && !still) return;
+  if (hosted || (!video && !still)) return;
   // Several workbench tabs can watch the same queue; save each job once.
   if (savedOutputClients().has(j.client)) return;
-  if (hosted) {
-    // The workspace worker archived the result and copied it to the server
-    // output folder; downloading it again would duplicate work and files.
-    j.mediaNote = '结果已保存在服务器输出目录';
-    markOutputSaved(j.client);
-    render(j);
-    persist();
-    return;
-  }
   const primary = video || still;
   j.mediaNote = video ? '正在保存视频和首帧…' : '正在保存图片…';
   render(j);
@@ -115,14 +118,13 @@ async function saveOutputs(j, render) {
         /* A missing poster must not block saving the video. */
       }
     }
-    await directoryReady;
     if (j.removed || isJobDeleted(readRemovedJobs(), j)) return;
     const base = taskFileBase(j.title);
     const filename = (item) => base + outputExtension(item.filename);
     const posterName =
-      filename(still) === filename(primary)
+      poster && filename(still) === filename(primary)
         ? base + '-首帧' + outputExtension(still.filename)
-        : filename(still);
+        : poster && filename(still);
     const handle = await refreshDirectory();
     let granted = false;
     if (handle) {
@@ -137,28 +139,31 @@ async function saveOutputs(j, render) {
         granted = false;
       }
     }
-    if (granted && handle) {
-      await writeFile(handle, filename(primary), data);
-      if (poster) await writeFile(handle, posterName, poster);
-      j.mediaNote = '已保存到本机目录';
-    } else if (hosted) {
-      // The workspace already archived the result and copied it to outputs/.
-      j.mediaNote = handle
-        ? '保存目录未授权，结果已保存在工作区；请在设置中重新选择文件夹'
-        : '结果已保存在工作区';
-    } else {
-      // No chosen folder: browsers cannot write the program directory, so download.
-      triggerDownload(data, filename(primary));
-      if (poster) triggerDownload(poster, posterName);
-      j.mediaNote = '已自动下载到浏览器下载目录';
-    }
+    await withOutputLock(async () => {
+      if (savedOutputClients().has(j.client) || isJobDeleted(readRemovedJobs(), j))
+        return;
+      if (granted && handle) {
+        const exports = await fileData(exportKey(j)) || [];
+        const files = [[filename(primary), data], ...(poster ? [[posterName, poster]] : [])];
+        for (const [name, blob] of files) {
+          const file = await writeFile(handle, name, blob, j.client);
+          exports.push({ directory: handle, name: file.name, size: file.size, modified: file.lastModified });
+          await fileData(exportKey(j), exports);
+        }
+        j.mediaNote = '已保存到本机目录';
+      } else {
+        triggerDownload(data, filename(primary));
+        if (poster) triggerDownload(poster, posterName);
+        j.mediaNote = '已自动下载到浏览器下载目录';
+      }
+      markOutputSaved(j.client);
+    });
     try {
       await fileData(mediaKey(j, primary), data);
       if (poster) await fileData(mediaKey(j, still), poster);
     } catch {
       /* The saved copies remain usable when browser storage is unavailable. */
     }
-    markOutputSaved(j.client);
   } catch (e) {
     j.mediaNote = '自动保存失败。' + e.message;
   }
@@ -166,11 +171,79 @@ async function saveOutputs(j, render) {
   render(j);
   persist();
 }
-async function writeFile(directory, filename, blob) {
-  const file = await directory.getFileHandle(filename, { create: true });
+async function existingFile(directory, name) {
+  try {
+    return await (await directory.getFileHandle(name)).getFile();
+  } catch (error) {
+    if (error.name === 'NotFoundError' || error.name === 'TypeMismatchError') return null;
+    throw error;
+  }
+}
+
+async function writeFile(directory, filename, blob, client) {
+  const ext = outputExtension(filename);
+  const stem = ext ? filename.slice(0, -ext.length) : filename;
+  const tag = client.replace(/[^a-z0-9]/gi, '').slice(0, 8);
+  let name = filename;
+  for (let n = 1; await existingFile(directory, name); n++)
+    name = stem + '-' + tag + (n > 1 ? '-' + n : '') + ext;
+  const file = await directory.getFileHandle(name, { create: true });
   const writer = await file.createWritable();
   await writer.write(blob);
   await writer.close();
+  return file.getFile();
+}
+
+async function deleteOutputFiles(job) {
+  if (!job.results?.length) return;
+  await job.savingOutputs;
+  await withOutputLock(async () => {
+    const exports = await fileData(exportKey(job));
+    if (!exports) {
+      const directory = await refreshDirectory();
+      if (!directory || (await directory.queryPermission({ mode: 'readwrite' })) !== 'granted') return;
+      const video = videoOf(job);
+      const still = stillOf(job);
+      const base = taskFileBase(job.title);
+      for (const item of [video, still].filter(Boolean)) {
+        const cached = await cachedOutput(job, item);
+        if (!(cached instanceof Blob)) continue;
+        const extension = outputExtension(item.filename);
+        const tag = item === still && video && outputExtension(video.filename) === extension ? '-首帧' : '';
+        const name = base + tag + extension;
+        const file = await existingFile(directory, name);
+        if (file && await sameContents(file, cached)) await directory.removeEntry(name);
+      }
+      return;
+    }
+    for (const saved of exports) {
+      const directory = saved.directory;
+      const mode = { mode: 'readwrite' };
+      if ((await directory.queryPermission(mode)) !== 'granted' &&
+          (await directory.requestPermission(mode)) !== 'granted')
+        throw Error('删除文件需要授权「' + directory.name + '」。');
+      const file = await existingFile(directory, saved.name);
+      if (!file || file.size !== saved.size || file.lastModified !== saved.modified)
+        continue;
+      try {
+        await directory.removeEntry(saved.name);
+      } catch (error) {
+        if (error.name !== 'NotFoundError') throw error;
+      }
+    }
+    await fileData(exportKey(job), []);
+  });
+}
+async function sameContents(first, second) {
+  if (first.size !== second.size) return false;
+  const chunk = 1024 ** 2;
+  for (let offset = 0; offset < first.size; offset += chunk) {
+    const bytes = await Promise.all([first, second].map(async (blob) =>
+      new Uint8Array(await blob.slice(offset, offset + chunk).arrayBuffer()),
+    ));
+    if (bytes[0].some((byte, index) => byte !== bytes[1][index])) return false;
+  }
+  return true;
 }
 async function downloadOutput(j, x) {
   triggerDownload(
@@ -314,6 +387,7 @@ export {
   downloadOutput,
   downloadable,
   clearOutputCache,
+  deleteOutputFiles,
   outputFilename,
   triggerDownload,
   zipOutputs,

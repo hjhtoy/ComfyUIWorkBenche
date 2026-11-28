@@ -2,6 +2,7 @@ import { hosted, watchWorkspace, workspaceRequest } from '../storage/workspace.j
 import { setupTransfer } from '../storage/transfer.js';
 import { $ } from './dom.js';
 import { pageKey, readLocal, writeLocal, storage } from '../storage/browser.js';
+import { legacyFrameform, workbenchId } from '../comfy/config.js';
 
 const themeKey = 'frameform.theme.v1';
 const themeControls = [
@@ -14,10 +15,7 @@ function applyTheme(value) {
   selected.checked = true;
 }
 
-// The chosen folder is a FileSystemDirectoryHandle. It only exists in the
-// browser, so it is always kept in this browser's IndexedDB, for both the
-// hosted workspace and a standalone HTML page.
-const directoryKey = 'frameform.output-directory.v1';
+const directoryKey = 'frameform.output-directory.v2.' + pageKey;
 const legacyDirectoryKey = 'directory:' + pageKey;
 
 function idbRequest(key, mode, value) {
@@ -28,11 +26,7 @@ function idbRequest(key, mode, value) {
         const tx = db.transaction('files', mode === 'get' ? 'readonly' : 'readwrite');
         const store = tx.objectStore('files');
         const request =
-          mode === 'get'
-            ? store.get(key)
-            : mode === 'delete'
-              ? store.delete(key)
-              : store.put(value, key);
+          mode === 'get' ? store.get(key) : store.put(value, key);
         tx.oncomplete = () => resolve(request.result);
         tx.onerror = tx.onabort = () => resolve(undefined);
       }),
@@ -41,71 +35,121 @@ function idbRequest(key, mode, value) {
 }
 
 let directory;
-const directoryReady = window.showDirectoryPicker
-  ? idbRequest(directoryKey, 'get')
-      .then(async (handle) => {
-        // Older standalone pages stored the handle under a page-scoped key.
-        directory = handle || (await idbRequest(legacyDirectoryKey, 'get'));
-      })
-      .catch(() => {})
-  : Promise.resolve();
+const directoryReady = refreshDirectory();
+const settingsQuery = new URLSearchParams({ workflow: pageKey });
+const settingsRoute = 'settings?' + settingsQuery;
+const settingsDialog = $('settingsDialog');
+let outputsRev = 0;
+let savedOutput = null;
+let chosenOutput;
+let defaultOutput = '浏览器下载目录';
+let canPickDirectory = false;
+let outputBusy = false;
+let settingsEdit = 0;
 
-function directorySetting() {
-  $('directoryName').textContent = directory?.name || '未选择';
-  $('pickDirectory').disabled = !window.showDirectoryPicker;
-  $('clearDirectory').hidden = !directory;
+function currentEdit(edit) {
+  return settingsDialog.open && edit === settingsEdit;
+}
+function renderOutputSetting() {
+  const selected = chosenOutput === undefined ? savedOutput : chosenOutput;
+  $('directoryName').textContent = (hosted ? selected : selected?.name) || defaultOutput;
+  $('pickDirectory').disabled = outputBusy || !canPickDirectory;
+  $('saveOutputsPath').disabled = outputBusy || chosenOutput === undefined;
+  $('clearDirectory').disabled = outputBusy || !selected;
+}
+function applyHostOutput(data) {
+  outputsRev = data.rev;
+  savedOutput = data.configured ? data.outputs : null;
+  defaultOutput = '默认下载目录 · ' + data.default;
+  canPickDirectory = data.canChooseDirectory === true;
+}
+async function loadOutputSetting(edit) {
+  chosenOutput = undefined;
+  outputBusy = true;
+  renderOutputSetting();
+  $('outputsStatus').textContent = '';
+  try {
+    if (hosted) {
+      const data = await workspaceRequest(settingsRoute);
+      if (!currentEdit(edit)) return;
+      applyHostOutput(data);
+      if (data.canChooseDirectory === undefined)
+        $('outputsStatus').textContent = '重启工作区服务后即可使用系统目录选择器。';
+      else if (!canPickDirectory)
+        $('outputsStatus').textContent = '请在工作区主机的本地桌面打开 Frameform，以使用系统目录选择器。';
+    } else {
+      const handle = await refreshDirectory();
+      if (!currentEdit(edit)) return;
+      savedOutput = handle || null;
+      canPickDirectory = !!window.showDirectoryPicker;
+      if (!canPickDirectory)
+        $('outputsStatus').textContent = '当前浏览器无法选择文件夹，结果将下载到浏览器下载目录。';
+    }
+  } catch (e) {
+    if (currentEdit(edit)) $('outputsStatus').textContent = '无法读取保存目录。' + e.message;
+  } finally {
+    if (currentEdit(edit)) {
+      outputBusy = false;
+      renderOutputSetting();
+    }
+  }
 }
 
 async function pickDirectory() {
+  const edit = settingsEdit;
+  outputBusy = true;
+  renderOutputSetting();
   try {
-    directory = await window.showDirectoryPicker({ mode: 'readwrite' });
-    directorySetting();
-    $('outputsStatus').textContent =
-      '之后完成的任务会保存到「' + directory.name + '」。';
-    await idbRequest(directoryKey, 'put', directory);
+    const selected = hosted
+      ? (await workspaceRequest('settings/choose-directory?' + settingsQuery, 'POST')).path
+      : await window.showDirectoryPicker({ mode: 'readwrite', startIn: savedOutput || 'downloads' });
+    if (!currentEdit(edit) || !selected) return;
+    chosenOutput = selected;
+    $('outputsStatus').textContent = '已选择文件夹，点击「保存」后生效。';
   } catch (e) {
-    if (e.name !== 'AbortError')
-      $('outputsStatus').textContent = '无法保存目录设置。' + e.message;
-  }
-}
-
-async function clearDirectory() {
-  directory = undefined;
-  directorySetting();
-  $('outputsStatus').textContent =
-    '已清除选择，之后完成的任务会下载到浏览器下载目录。';
-  await idbRequest(directoryKey, 'delete');
-}
-
-// The workspace host can write an absolute path itself, which survives reloads
-// and does not depend on browser folder permissions.
-let outputsRev = 0;
-async function loadOutputs() {
-  try {
-    const data = await workspaceRequest('settings');
-    outputsRev = data.rev;
-    $('outputsPath').value = data.outputs;
-    $('outputsDefault').textContent = '默认 ' + data.default;
-  } catch (e) {
-    $('hostedOutputsStatus').textContent = '无法读取输出目录。' + e.message;
-  }
-}
-async function saveOutputsPath() {
-  $('saveOutputsPath').disabled = true;
-  try {
-    const data = await workspaceRequest('settings', 'PUT', {
-      rev: outputsRev,
-      outputs: $('outputsPath').value.trim(),
-    });
-    outputsRev = data.rev;
-    $('outputsPath').value = data.outputs;
-    $('hostedOutputsStatus').textContent =
-      '已保存，之后完成的任务会写入 ' + data.outputs;
-  } catch (e) {
-    $('hostedOutputsStatus').textContent = '保存失败。' + e.message;
-    if (e.status === 409) loadOutputs();
+    if (currentEdit(edit) && e.name !== 'AbortError')
+      $('outputsStatus').textContent = '无法选择文件夹。' + e.message;
   } finally {
-    $('saveOutputsPath').disabled = false;
+    if (currentEdit(edit)) {
+      outputBusy = false;
+      renderOutputSetting();
+    }
+  }
+}
+
+async function saveOutputSetting() {
+  const edit = settingsEdit;
+  const selected = chosenOutput;
+  if (selected === undefined) return;
+  outputBusy = true;
+  renderOutputSetting();
+  try {
+    if (hosted) {
+      const data = await workspaceRequest(settingsRoute, 'PUT', {
+        rev: outputsRev,
+        outputs: selected || '',
+      });
+      if (!currentEdit(edit)) return;
+      applyHostOutput(data);
+    } else {
+      if (!await idbRequest(directoryKey, 'put', selected))
+        throw Error('浏览器无法记住目录授权。');
+      directory = selected;
+      if (!currentEdit(edit)) return;
+      savedOutput = selected;
+    }
+    chosenOutput = undefined;
+    $('outputsStatus').textContent = '已保存当前工作流的结果目录。';
+  } catch (e) {
+    if (currentEdit(edit)) {
+      if (e.status === 409) await loadOutputSetting(edit);
+      if (currentEdit(edit)) $('outputsStatus').textContent = '保存失败。' + e.message;
+    }
+  } finally {
+    if (currentEdit(edit)) {
+      outputBusy = false;
+      renderOutputSetting();
+    }
   }
 }
 
@@ -152,12 +196,15 @@ async function clearRunningHub() {
   }
 }
 
-// Workbench pages run in separate iframes; always re-read the shared handle
-// before saving so a folder chosen in another page takes effect here too.
 async function refreshDirectory() {
-  if (!window.showDirectoryPicker) return undefined;
+  if (hosted || !window.showDirectoryPicker) return undefined;
   const handle = await idbRequest(directoryKey, 'get');
-  if (handle) directory = handle;
+  directory = handle;
+  if (handle === undefined) {
+    directory = await idbRequest(legacyDirectoryKey, 'get');
+    if (!directory && (legacyFrameform || workbenchId === 'pika-h3'))
+      directory = await idbRequest('frameform.output-directory.v1', 'get');
+  }
   return directory;
 }
 
@@ -176,38 +223,23 @@ function setupSettings() {
   });
 
   $('pickDirectory').onclick = pickDirectory;
-  $('clearDirectory').onclick = clearDirectory;
-  $('hostedOutputSettings').hidden = !hosted;
-  if (hosted) $('saveOutputsPath').onclick = saveOutputsPath;
+  $('clearDirectory').onclick = () => {
+    chosenOutput = null;
+    renderOutputSetting();
+    $('outputsStatus').textContent = '点击「保存」使用默认目录。';
+  };
+  $('saveOutputsPath').onclick = saveOutputSetting;
   $('runninghubSettings').hidden = !hosted;
   if (hosted) {
     $('saveRunningHubKey').onclick = saveRunningHub;
     $('clearRunningHubKey').onclick = clearRunningHub;
   }
-  if (!window.showDirectoryPicker)
-    $('outputsStatus').textContent =
-      '当前浏览器不支持选择文件夹，任务完成后会自动下载视频和首帧。';
-
-  $('openSettings').onclick = async () => {
-    // Re-read the stored handle: another window may have picked a new folder.
-    if (window.showDirectoryPicker)
-      directory = (await idbRequest(directoryKey, 'get')) || directory;
-    directorySetting();
-    if (directory) {
-      try {
-        if ((await directory.queryPermission({ mode: 'readwrite' })) !== 'granted')
-          $('outputsStatus').textContent =
-            '保存目录需要重新授权：请点「选择文件夹…」再选一次该目录。';
-      } catch {}
-    }
-    if (hosted) {
-      loadRunningHub();
-      loadOutputs();
-    }
-    $('settingsDialog').showModal();
+  $('openSettings').onclick = () => {
+    settingsDialog.showModal();
+    loadOutputSetting(++settingsEdit);
+    if (hosted) loadRunningHub();
   };
-  $('closeSettings').onclick = () => $('settingsDialog').close();
-  directorySetting();
+  $('closeSettings').onclick = () => settingsDialog.close();
 }
 
 export {

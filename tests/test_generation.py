@@ -222,11 +222,25 @@ async def main():
                 return " × ".join(str(32 * round(side * k / 32)) for side in (x, y))
 
             opts = await size.locator("option").evaluate_all(
-                "opts=>opts.map(o=>[o.text,Number(o.value)])"
+                "opts=>opts.filter(o=>Number.isFinite(Number(o.value))).map(o=>[o.text,Number(o.value)])"
             )
             assert len(set(s for s, _ in opts)) == len(opts)
             assert set(s for s, _ in opts) == set(dims(n / 100) for n in range(25, 201))
             assert all(dims(mp) == s for s, mp in opts)
+        original_editor = await page.locator("#editor").inner_html()
+        await page.evaluate("document.getElementById('editor').textContent = 'custom resolution'")
+        await size.select_option(label="1920 × 1080")
+        assert await page.evaluate("buildGraph(snapshot(),[])['136'].inputs.width") == 1920
+        await size.select_option("custom")
+        await page.locator("#width").fill("1664")
+        await page.locator("#height").fill("960")
+        exact = await page.evaluate("""() => {
+          const graph = buildGraph(snapshot(), []);
+          const { dimensions, form } = graphJobData('http://127.0.0.1', graph, matchWorkflow(graph));
+          return [graph['136'].inputs.width, graph['136'].inputs.height, dimensions, form.resolution];
+        }""")
+        assert exact == [1664, 960, "1664 × 960", [1664, 960]], exact
+        await page.locator("#editor").evaluate("(editor, html) => { editor.innerHTML = html; editorChanged(); }", original_editor)
         await size.select_option(label="1024 × 576")
         await page.locator("#steps").focus()
         await page.keyboard.press("ArrowRight")
@@ -378,6 +392,9 @@ async def main():
         if http_mode:
             await page.locator("#pickDirectory").click()
             await page.get_by_text("frameform-test", exact=True).wait_for()
+            assert not await page.evaluate("Boolean(directory)")
+            await page.locator("#saveOutputsPath").click()
+            await page.locator("#outputsStatus", has_text="已保存").wait_for()
         await page.locator("#closeSettings").click()
         await ed.fill("完成测试")
         await page.keyboard.insert_text("@")
@@ -480,6 +497,23 @@ async def main():
         )
         await page.locator("#closePlayer").click()
         assert await page.evaluate("snapshot().prompt") == "查看成功任务保留草稿"
+        if http_mode:
+            done = page.locator(".job").filter(has_text="完成测试")
+            delete_job = done.get_by_role("button", name="删除", exact=True)
+            delete_files = page.get_by_role("checkbox", name="同时删除本地结果文件")
+            await delete_job.click()
+            assert not await delete_files.is_checked()
+            await delete_files.check()
+            await page.locator("#keepTasks").click()
+            await delete_job.click()
+            assert not await delete_files.is_checked()
+            await delete_files.check()
+            await page.locator("#confirmDelete").click()
+            await done.wait_for(state="detached")
+            assert await page.evaluate(
+                "async()=>{for await (const h of directory.values())"
+                "{if(h.name.startsWith('完成测试.'))return false}return true}"
+            )
         await page.unroute("**/view?*")
         api.reject = True
         await page.locator("#generate").click()

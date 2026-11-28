@@ -261,6 +261,9 @@ async def test(path):
             assert await page.locator("#steps").input_value() == "7"
             # A second import of the same project reuses the existing folder.
             await page.locator("#openBatch").click()
+            await page.locator("#batchSize").select_option("custom")
+            await page.locator("#batchWidth").fill("832")
+            await page.locator("#batchHeight").fill("1472")
             await page.locator("#batchFolder").set_input_files(project)
             await page.locator("#batchSelectAll").check()
             await page.locator("#batchRows tr", has_text="S10_第二条").locator(
@@ -268,6 +271,9 @@ async def test(path):
             ).uncheck()
             await page.get_by_role("button", name="将 1 条加入生成队列").click()
             await page.wait_for_function("jobs.length===2")
+            await page.wait_for_function("jobs.at(-1).id")
+            inputs = posts[-1]["136"]["inputs"]
+            assert (inputs["width"], inputs["height"]) == (832, 1472)
             await page.locator("#addRef").click()
             await page.get_by_role(
                 "button", name="测试分镜包", exact=True

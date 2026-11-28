@@ -10,6 +10,9 @@ import {
   durationSeconds,
   defaultRatio,
   directSizes,
+  commonResolutions,
+  exactResolution,
+  validResolution,
   fps,
   pixelDimensions,
   stepsFrom,
@@ -17,10 +20,13 @@ import {
 
 function populateSizeOptions(select, ratio, requestedMP) {
   if (!sizeConfig) return;
+  const previous = select.value;
+  const custom = exactResolution ? [new Option('自定义宽高', 'custom')] : [];
   if (sizeConfig.mode === 'preset') {
     const value = requestedMP ?? Number(select.value);
     select.replaceChildren(
       ...directSizes.map((pair, i) => new Option(pair.join(' × '), String(i))),
+      ...custom,
     );
     select.value = String(directSizes[value] ? value : 0);
     return;
@@ -53,11 +59,14 @@ function populateSizeOptions(select, ratio, requestedMP) {
   more.label = '更多尺寸';
   for (const [label, mp] of unique)
     (popular.has(label) ? common : more).append(new Option(label, String(mp)));
-  select.replaceChildren(common, ...(more.childElementCount ? [more] : []));
+  const [x, y] = ratio.split(':').map(Number);
+  const exact = exactResolution ? commonResolutions.filter(([w, h]) =>
+    w * y === h * x && !unique.has(w + ' × ' + h),
+  ) : [];
+  for (const pair of exact) common.append(new Option(pair.join(' × '), pair.join('x')));
+  select.replaceChildren(common, ...(more.childElementCount ? [more] : []), ...custom);
   if ([...unique.values()].includes(selected)) select.value = String(selected);
-}
-function updateSizeOptions(requestedMP) {
-  populateSizeOptions($('size'), $('ratio').value, requestedMP);
+  if (requestedMP === undefined && previous === 'custom') select.value = previous;
 }
 function setupSlider(input, config, value, unit) {
   const group = input.closest('.slider');
@@ -71,6 +80,14 @@ function setupSlider(input, config, value, unit) {
   ends[0].textContent = config.min + unit;
   ends[1].textContent = config.max + unit;
 }
+
+const manualPicture = {
+  ratio: $('ratio'),
+  size: $('size'),
+  steps: $('steps'),
+  width: $('width'),
+  height: $('height'),
+};
 
 function setupPictureControls({ ratio, size, steps }) {
   size.closest('label.size-field, .size-field').hidden = !sizeConfig;
@@ -88,11 +105,7 @@ function setupPictureControls({ ratio, size, steps }) {
   populateSizeOptions(size, ratio.value);
 }
 function setupParameters() {
-  setupPictureControls({
-    ratio: $('ratio'),
-    size: $('size'),
-    steps: $('steps'),
-  });
+  setupPictureControls(manualPicture);
   setupSlider(
     $('duration'),
     profile.duration,
@@ -137,21 +150,63 @@ function updateSliderFill(input) {
     input.style.setProperty('--fill', progress + '%');
   }
 }
-function pictureSettings({ ratio, size, steps }) {
+function showCustomResolution({ ratio, size, width, height }) {
+  const custom = size.value === 'custom';
+  ratio.disabled = custom;
+  width.parentElement.parentElement.hidden = !custom;
+  if (custom && !width.value && !height.value) {
+    const dimensions = size.dataset.previousSize?.match(/^(\d+) × (\d+)$/);
+    if (dimensions) [width.value, height.value] = dimensions.slice(1);
+  } else if (!custom) size.dataset.previousSize = size.selectedOptions[0]?.text || '';
+}
+
+function bindResolution(picture, changed) {
+  const { ratio, size, width, height } = picture;
+  ratio.onchange = () => {
+    populateSizeOptions(size, ratio.value);
+    showCustomResolution(picture);
+    changed();
+  };
+  size.onchange = () => {
+    showCustomResolution(picture);
+    changed();
+  };
+  width.oninput = height.oninput = changed;
+  showCustomResolution(picture);
+}
+
+function restoreResolution(picture, saved) {
+  const { ratio, size, width, height } = picture;
+  populateSizeOptions(size, ratio.value, saved.mp);
+  if (exactResolution && Array.isArray(saved.resolution)) {
+    const preset = saved.resolution.join('x');
+    size.value = !saved.customResolution && [...size.options].some((o) => o.value === preset)
+      ? preset : 'custom';
+    [width.value, height.value] = saved.resolution.map((value) => value ?? '');
+  } else if (size.value === 'custom') size.selectedIndex = 0;
+  showCustomResolution(picture);
+}
+
+function pictureSettings({ ratio, size, steps, width, height }, validate = false) {
+  const customResolution = size.value === 'custom';
+  const resolution = customResolution
+    ? [width.valueAsNumber, height.valueAsNumber]
+    : size.value.includes('x') ? size.value.split('x').map(Number) : undefined;
+  if (validate && customResolution && !validResolution(resolution))
+    throw Error('请输入大于 0 的整数宽度和高度。');
   return {
     steps: profile.steps ? steps.valueAsNumber : undefined,
-    mp: sizeConfig ? Number(size.value) : undefined,
-    ratio: defaultRatio ? ratio.value : undefined,
-    dimensions: size.selectedOptions[0]?.text,
+    mp: sizeConfig && !resolution ? Number(size.value) : undefined,
+    ratio: defaultRatio && !customResolution ? ratio.value : undefined,
+    dimensions: resolution
+      ? validResolution(resolution) ? resolution.join(' × ') : undefined
+      : size.selectedOptions[0]?.text,
+    ...(resolution && { resolution, customResolution }),
   };
 }
-function generationSettings() {
+function generationSettings(validate = false) {
   return {
-    ...pictureSettings({
-      ratio: $('ratio'),
-      size: $('size'),
-      steps: $('steps'),
-    }),
+    ...pictureSettings(manualPicture, validate),
     duration: profile.duration
       ? durationSeconds($('duration').valueAsNumber)
       : undefined,
@@ -160,7 +215,9 @@ function generationSettings() {
 
 export {
   setupParameters,
-  updateSizeOptions,
+  bindResolution,
+  restoreResolution,
+  manualPicture,
   controls,
   generationSettings,
   setupPictureControls,

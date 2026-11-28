@@ -145,6 +145,9 @@ async def verify(path):
             "editorial",
             "cinema",
             "lilac",
+            "celadon",
+            "terracotta",
+            "graphite",
         ):
             await page.evaluate("theme=>applyTheme(theme)", theme)
             borders = await page.locator(".job:visible").evaluate_all("""rows=>rows.map(row=>{
@@ -185,7 +188,7 @@ async def verify(path):
         assert not errors, errors
         await browser.close()
         print(
-            f"PASS {path.name}: five filters, keyboard navigation, server scope, dynamic state, batch selection and horizontal-only dividers in all six themes"
+            f"PASS {path.name}: five filters, keyboard navigation, server scope, dynamic state, batch selection and horizontal-only dividers in all nine themes"
         )
 
 

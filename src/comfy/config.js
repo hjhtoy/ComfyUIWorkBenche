@@ -20,13 +20,34 @@ const initialDimensions = [
   readField(sizeConfig?.width),
   readField(sizeConfig?.height),
 ];
+const commonResolutions = [
+  [512, 512], [768, 512], [512, 768], [768, 768], [1024, 1024],
+  [1024, 768], [768, 1024], [1280, 720], [720, 1280], [1344, 768],
+  [768, 1344], [1536, 1024], [1024, 1536], [1920, 1080], [1080, 1920],
+  [2048, 2048], [2560, 1440], [1440, 2560], [3840, 2160], [2160, 3840],
+];
 const directSizes =
   sizeConfig?.mode === 'preset'
-    ? [initialDimensions, ...(sizeConfig.presets || [])].filter(
+    ? [initialDimensions, ...(sizeConfig.presets || []), ...commonResolutions].filter(
         (entry, i, list) =>
           list.findIndex((x) => String(x) === String(entry)) === i,
       )
     : [];
+const selectorNode = sizeConfig?.mode === 'selector' && sizeConfig.ratio[0];
+const resolutionLinks = [[], []];
+if (selectorNode && template[selectorNode]?.class_type === 'ResolutionSelector') {
+  for (const [id, node] of Object.entries(template)) {
+    for (const [field, value] of Object.entries(node.inputs)) {
+      if (Array.isArray(value) && value.length === 2 && value[0] === selectorNode &&
+          (value[1] === 0 || value[1] === 1))
+        resolutionLinks[value[1]].push([id, field]);
+    }
+  }
+}
+const exactResolution = sizeConfig?.mode === 'preset' ||
+  resolutionLinks.every((fields) => fields.length);
+const validResolution = (pair) => Array.isArray(pair) && pair.length === 2 &&
+  pair.every((value) => Number.isSafeInteger(value) && value > 0);
 const fps = profile.fps;
 const durationInFrames = profile.duration?.unit === 'frames';
 // Forms, job history and batch TXT use seconds. A direct H3 length uses frames.
@@ -70,6 +91,10 @@ export {
   durationFieldValue,
   defaultRatio,
   directSizes,
+  commonResolutions,
+  resolutionLinks,
+  exactResolution,
+  validResolution,
   fps,
   pixelDimensions,
   stepsFrom,

@@ -812,6 +812,39 @@ dialog::backdrop {
 .size-field select:hover {
   border-color: var(--border-hover);
 }
+.resolution-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.resolution-fields label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+.resolution-fields input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 5px 7px;
+  border: 1px solid var(--border-control);
+  border-radius: 5px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font: 13px var(--mono);
+}
+#deleteError:empty {
+  display: none;
+}
+.delete-files {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.delete-files input {
+  margin: 0;
+  accent-color: var(--warm);
+}
 .nav .wrap,
 .brand,
 .links,

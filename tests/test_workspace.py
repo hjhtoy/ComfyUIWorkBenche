@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import AsyncMock, patch
 
 from aiohttp import ClientSession, web
 from PIL import Image
@@ -115,6 +116,10 @@ async def verify(temp):
                     updated=await res.json()
                     assert updated["outputs"]==str(custom.resolve()), updated
                 assert custom.is_dir()
+                async with http.get(url+"/workspace/settings?workflow=another-workflow") as res:
+                    other_settings = await res.json()
+                    assert not other_settings["configured"]
+                    assert other_settings["outputs"] == settings["default"]
                 async with http.get(url+"/workspace/backup") as res:
                     assert res.status==200
                     archive=temp/"backup.zip"
@@ -124,40 +129,32 @@ async def verify(temp):
             restore(archive,fresh)
             runner,url=await listen(create_app(fresh,html,outputs=temp/"outputs"))
             view=await browser.new_page()
-            await view.add_init_script(
-                "window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('frameform-test', {create:true})"
-            )
             await view.goto(url)
             await view.locator("#editor .mention").wait_for()
-            await view.locator("#openSettings").click()
-            # Hosted pages share the same native folder picker as standalone pages.
-            await view.locator("#pickDirectory").wait_for(state="visible")
-            await view.wait_for_function("document.querySelector('#directoryName').textContent==='未选择'")
-            await view.locator("#pickDirectory").click()
-            await view.get_by_text("frameform-test",exact=True).wait_for()
-            assert await view.locator("#clearDirectory").is_visible()
-            # The host-side output path is editable from the same dialog and does
-            # not depend on browser folder permissions.
-            await view.wait_for_function(
-                "value => document.querySelector('#outputsPath').value === value",
-                arg=str((temp/"custom-outputs").resolve()),
-            )
             ui_outputs=temp/"ui-outputs"
-            await view.locator("#outputsPath").fill(str(ui_outputs))
-            await view.locator("#saveOutputsPath").click()
-            await view.wait_for_function(
-                "document.querySelector('#hostedOutputsStatus').textContent.includes('已保存')"
-            )
-            assert ui_outputs.is_dir()
-            await view.locator("#clearDirectory").click()
-            assert await view.locator("#directoryName").inner_text()=="未选择"
-            assert await view.locator("#clearDirectory").is_hidden()
-            await view.locator("#closeSettings").click()
-            # A job finishing on the hosted page must be saved into the chosen folder.
-            await view.locator("#openSettings").click()
-            await view.locator("#pickDirectory").wait_for(state="visible")
-            await view.locator("#pickDirectory").click()
-            await view.get_by_text("frameform-test",exact=True).wait_for()
+            ui_outputs.mkdir()
+            picker = AsyncMock(side_effect=[None, ui_outputs.resolve(), ui_outputs.resolve()])
+            with patch("workspace.server.choose_output_directory", picker), patch(
+                "workspace.server.picker_executable", return_value="test-picker"
+            ):
+                await view.locator("#openSettings").click()
+                original = str(custom.resolve())
+                await view.locator("#directoryName", has_text=original).wait_for()
+                async with view.expect_response("**/workspace/settings/choose-directory?*"):
+                    await view.locator("#pickDirectory").click()
+                assert await view.locator("#saveOutputsPath").is_disabled()
+                assert await view.locator("#directoryName").inner_text() == original
+                await view.locator("#pickDirectory").click()
+                await view.locator("#directoryName", has_text=str(ui_outputs.resolve())).wait_for()
+                await view.locator("#closeSettings").click()
+                await view.locator("#openSettings").click()
+                await view.locator("#directoryName", has_text=original).wait_for()
+                await view.locator("#pickDirectory").click()
+                await view.locator("#directoryName", has_text=str(ui_outputs.resolve())).wait_for()
+                await view.locator("#saveOutputsPath").click()
+                await view.locator("#outputsStatus", has_text="已保存").wait_for()
+            assert picker.await_count == 3
+            assert picker.call_args.args == (custom.resolve(),)
             await view.locator("#closeSettings").click()
             await view.locator("#generate").click()
             # Hosted jobs are archived by the worker; the browser must not save again.
@@ -177,6 +174,29 @@ async def verify(temp):
                 await view.locator("#download").click()
             saved = await download.value
             assert saved.suggested_filename=="背景.png"
+            await view.locator("#closePlayer").click()
+            await view.locator("#openSettings").click()
+            await view.locator("#directoryName", has_text=str(ui_outputs.resolve())).wait_for()
+            await view.locator("#clearDirectory").click()
+            await view.locator("#saveOutputsPath").click()
+            await view.locator("#outputsStatus", has_text="已保存").wait_for()
+            await view.locator("#closeSettings").click()
+            await view.locator(".job").first.get_by_role("button", name="删除", exact=True).click()
+            delete_files = view.get_by_role("checkbox", name="同时删除本地结果文件")
+            assert not await delete_files.is_checked()
+            await delete_files.check()
+            await view.locator("#confirmDelete").click()
+            await view.locator("#deleteTasks").wait_for(state="hidden")
+            assert not exported.exists()
+            assert await view.locator(".job").count() == 1
+            kept = next((temp/"outputs").glob("*.png"))
+            await view.locator(".job").get_by_role("checkbox").check()
+            await view.locator("#batchDelete").click()
+            assert not await delete_files.is_checked()
+            await view.locator("#confirmDelete").click()
+            await view.locator("#deleteTasks").wait_for(state="hidden")
+            assert not await view.locator(".job").count()
+            assert kept.read_bytes() == png
             assert not errors, errors
             await view.close()
             # Legacy data must originate in the old browser and path.
